@@ -1,6 +1,5 @@
-// Vercel serverless entrypoint. Wraps the Express app so every /api/* request
-// is handled by a single function.
-import serverless from 'serverless-http';
+// Vercel serverless entrypoint. On Vercel's Node runtime, an Express app is a
+// valid (req, res) request handler, so we can export it directly.
 import app from '../src/app.js';
 
-export default serverless(app);
+export default app;
