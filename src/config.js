@@ -13,7 +13,7 @@ export const config = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   mongoUrl: process.env.MONGO_URL || 'mongodb://localhost:27017/gettogether',
   event: {
-    name: process.env.EVENT_NAME || 'Silver Jubilee Batch Reunion',
+    name: process.env.EVENT_NAME || 'OEC Silver Jubilee 1997-2001 Batch Reunion',
     date: process.env.EVENT_DATE || '2026-12-19',
   },
   admin: {
