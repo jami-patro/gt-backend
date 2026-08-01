@@ -14,12 +14,20 @@ export async function connectDB() {
 
   if (!cached.promise) {
     mongoose.set('strictQuery', true);
+    mongoose.set('bufferCommands', false); // fail fast instead of queuing when not connected
     cached.promise = mongoose
       .connect(config.mongoUrl, {
-        serverSelectionTimeoutMS: 10000,
+        serverSelectionTimeoutMS: 6000,
+        connectTimeoutMS: 6000,
+        socketTimeoutMS: 8000,
         maxPoolSize: 5,
       })
-      .then((m) => m);
+      .then((m) => m)
+      .catch((err) => {
+        // Reset so the next request can retry a fresh connection.
+        cached.promise = null;
+        throw err;
+      });
   }
 
   cached.conn = await cached.promise;
