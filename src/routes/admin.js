@@ -24,6 +24,8 @@ async function buildRecords() {
       branch: u.branch,
       rollNumber: u.rollNumber,
       approved: u.approved,
+      paymentStatus: u.paymentStatus || 'not_paid',
+      contributionAmount: u.contributionAmount ?? 0,
       createdAt: u.createdAt,
       attendance: r?.attendance || null,
       foodPreference: r?.foodPreference || null,
@@ -51,7 +53,8 @@ router.get('/export.csv', async (_req, res, next) => {
 
     const headers = [
       'Name', 'Email', 'Phone', 'Branch', 'Roll Number', 'Approved',
-      'Attendance', 'Food', 'Guests', 'T-Shirt', 'Message', 'Responded At', 'Registered At',
+      'Attendance', 'Food', 'Guests', 'T-Shirt', 'Payment', 'Contribution (INR)',
+      'Message', 'Responded At', 'Registered At',
     ];
 
     const esc = (v) => {
@@ -63,8 +66,9 @@ router.get('/export.csv', async (_req, res, next) => {
     for (const r of rows) {
       lines.push([
         r.name, r.email, r.phone, r.branch, r.rollNumber, r.approved ? 'Yes' : 'No',
-        r.attendance, r.foodPreference, r.guests, r.tshirtSize, r.message,
-        r.respondedAt, r.createdAt,
+        r.attendance, r.foodPreference, r.guests, r.tshirtSize,
+        r.paymentStatus === 'paid' ? 'Paid' : 'Not paid', r.contributionAmount,
+        r.message, r.respondedAt, r.createdAt,
       ].map(esc).join(','));
     }
 
@@ -94,6 +98,137 @@ router.patch('/users/:id/approval', async (req, res, next) => {
     target.approved = approved;
     await target.save();
     return res.json({ ok: true, approved: target.approved });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PATCH /api/admin/users/:id/payment — update contribution status/amount.
+// Body: { paymentStatus?: 'paid'|'not_paid', contributionAmount?: number }
+router.patch('/users/:id/payment', async (req, res, next) => {
+  try {
+    const { paymentStatus, contributionAmount } = req.body || {};
+    const update = {};
+
+    if (paymentStatus !== undefined) {
+      if (!['paid', 'not_paid'].includes(paymentStatus)) {
+        return res.status(400).json({ error: 'paymentStatus must be paid or not_paid' });
+      }
+      update.paymentStatus = paymentStatus;
+    }
+    if (contributionAmount !== undefined) {
+      const amt = Number(contributionAmount);
+      if (Number.isNaN(amt) || amt < 0) {
+        return res.status(400).json({ error: 'contributionAmount must be a non-negative number' });
+      }
+      update.contributionAmount = Math.round(amt);
+    }
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'Nothing to update' });
+    }
+
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    if (target.role === 'admin') {
+      return res.status(403).json({ error: 'Cannot set payment on an admin account' });
+    }
+
+    Object.assign(target, update);
+    await target.save();
+    return res.json({
+      ok: true,
+      paymentStatus: target.paymentStatus,
+      contributionAmount: target.contributionAmount,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PATCH /api/admin/records/:id — admin override of ANY field for a member,
+// covering both the user profile and their RSVP response.
+router.patch('/records/:id', async (req, res, next) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts cannot be edited here' });
+    }
+
+    const b = req.body || {};
+
+    // --- User profile fields ---
+    if (b.name !== undefined) user.name = String(b.name).trim();
+    if (b.phone !== undefined) user.phone = b.phone ? String(b.phone).trim() : null;
+    if (b.branch !== undefined) user.branch = b.branch ? String(b.branch).trim() : null;
+    if (b.rollNumber !== undefined) user.rollNumber = b.rollNumber ? String(b.rollNumber).trim() : null;
+    if (b.approved !== undefined) user.approved = Boolean(b.approved);
+    if (b.paymentStatus !== undefined) {
+      if (!['paid', 'not_paid'].includes(b.paymentStatus)) {
+        return res.status(400).json({ error: 'Invalid paymentStatus' });
+      }
+      user.paymentStatus = b.paymentStatus;
+    }
+    if (b.contributionAmount !== undefined) {
+      const amt = Number(b.contributionAmount);
+      if (Number.isNaN(amt) || amt < 0) return res.status(400).json({ error: 'Invalid amount' });
+      user.contributionAmount = Math.round(amt);
+    }
+    if (b.email !== undefined) {
+      const email = String(b.email).toLowerCase().trim();
+      const clash = await User.findOne({ email, _id: { $ne: user._id } }).lean();
+      if (clash) return res.status(409).json({ error: 'Another member already uses that email' });
+      user.email = email;
+    }
+    await user.save();
+
+    // --- RSVP response fields (upsert) ---
+    const respPatch = {};
+    if (b.attendance !== undefined) {
+      if (!['yes', 'no', 'maybe'].includes(b.attendance)) {
+        return res.status(400).json({ error: 'Invalid attendance' });
+      }
+      respPatch.attendance = b.attendance;
+    }
+    if (b.foodPreference !== undefined) {
+      if (!['veg', 'non_veg'].includes(b.foodPreference)) {
+        return res.status(400).json({ error: 'Invalid foodPreference' });
+      }
+      respPatch.foodPreference = b.foodPreference;
+    }
+    if (b.tshirtSize !== undefined) respPatch.tshirtSize = b.tshirtSize || null;
+    if (b.message !== undefined) respPatch.message = b.message ? String(b.message).slice(0, 500) : null;
+    if (b.guests !== undefined) respPatch.guests = Math.max(0, Number(b.guests) || 0);
+
+    let response = await Response.findOne({ user: user._id });
+    if (Object.keys(respPatch).length > 0) {
+      response = await Response.findOneAndUpdate(
+        { user: user._id },
+        { user: user._id, ...respPatch },
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      );
+    }
+
+    return res.json({
+      record: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        branch: user.branch,
+        rollNumber: user.rollNumber,
+        approved: user.approved,
+        paymentStatus: user.paymentStatus,
+        contributionAmount: user.contributionAmount,
+        createdAt: user.createdAt,
+        attendance: response?.attendance || null,
+        foodPreference: response?.foodPreference || null,
+        guests: response?.guests ?? null,
+        tshirtSize: response?.tshirtSize || null,
+        message: response?.message || null,
+        respondedAt: response?.updatedAt || null,
+      },
+    });
   } catch (err) {
     return next(err);
   }

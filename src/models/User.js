@@ -17,6 +17,9 @@ const userSchema = new mongoose.Schema(
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
     // Members start unapproved; an admin approves them before their vote counts.
     approved: { type: Boolean, default: false },
+    // Contribution tracking (admin-managed). Amounts in INR.
+    paymentStatus: { type: String, enum: ['not_paid', 'paid'], default: 'not_paid' },
+    contributionAmount: { type: Number, min: 0, default: 0 },
   },
   { timestamps: true },
 );
