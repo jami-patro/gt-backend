@@ -7,6 +7,7 @@ import {
   isValidEmail,
 } from '../utils/auth.js';
 import { requireAuth } from '../middleware/auth.js';
+import { sendWelcomeEmail } from '../services/email.js';
 
 const router = Router();
 
@@ -53,6 +54,16 @@ router.post('/register', async (req, res, next) => {
       passwordHash: hashPassword(String(password)),
       role: 'user',
     });
+
+    // Send the welcome email before responding. On serverless (Vercel) any
+    // work started after the response may be frozen/killed, so we await it.
+    // Wrapped so a mail failure never blocks a successful registration.
+    try {
+      const mail = await sendWelcomeEmail(user);
+      if (!mail.ok && !mail.skipped) console.warn('Welcome email failed:', mail.error);
+    } catch (e) {
+      console.warn('Welcome email error:', e.message);
+    }
 
     const token = signToken(user);
     return res.status(201).json({ token, user: publicUser(user) });

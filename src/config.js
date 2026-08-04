@@ -21,4 +21,18 @@ export const config = {
     email: process.env.ADMIN_EMAIL || 'admin@reunion.com',
     password: process.env.ADMIN_PASSWORD || 'changeme123',
   },
+  email: {
+    // Provider is auto-detected: Gmail (SMTP) is used when GMAIL_USER +
+    // GMAIL_APP_PASSWORD are set; otherwise Resend (HTTP) is used.
+    gmailUser: (process.env.GMAIL_USER || '').trim(),
+    // App passwords are displayed with spaces; Google expects them removed.
+    gmailAppPassword: (process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, ''),
+    // Resend (needs a verified domain to reach arbitrary recipients)
+    apiKey: process.env.RESEND_API_KEY || '',
+    // Display "from". For Gmail this defaults to the Gmail address.
+    // e.g. "OEC Reunion <noreply@yourdomain.com>"
+    from: process.env.EMAIL_FROM || '',
+    fromName: process.env.EMAIL_FROM_NAME || 'OEC Silver Jubilee Reunion',
+    replyTo: process.env.EMAIL_REPLY_TO || '',
+  },
 };

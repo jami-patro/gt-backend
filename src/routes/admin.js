@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { User } from '../models/User.js';
 import { Response } from '../models/Response.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { isEmailEnabled, emailProvider, sendBroadcast } from '../services/email.js';
 
 const router = Router();
 
@@ -228,6 +229,94 @@ router.patch('/records/:id', async (req, res, next) => {
         message: response?.message || null,
         respondedAt: response?.updatedAt || null,
       },
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// Resolve the recipient list for a broadcast audience.
+// audience: 'all' | 'approved' | 'pending' | 'attending'
+async function resolveRecipients(audience) {
+  if (audience === 'attending') {
+    const responses = await Response.find({ attendance: 'yes' })
+      .populate('user', 'email role approved')
+      .lean();
+    return responses
+      .filter((r) => r.user && r.user.role === 'user' && r.user.approved && r.user.email)
+      .map((r) => r.user.email);
+  }
+
+  const query = { role: 'user' };
+  if (audience === 'approved') query.approved = true;
+  if (audience === 'pending') query.approved = false;
+  // 'all' → every non-admin member
+
+  const users = await User.find(query, 'email').lean();
+  return users.map((u) => u.email).filter(Boolean);
+}
+
+// GET /api/admin/email/status — is email configured, and audience counts
+router.get('/email/status', async (_req, res, next) => {
+  try {
+    const [all, approved, pending, attending] = await Promise.all([
+      resolveRecipients('all'),
+      resolveRecipients('approved'),
+      resolveRecipients('pending'),
+      resolveRecipients('attending'),
+    ]);
+    return res.json({
+      enabled: isEmailEnabled(),
+      provider: emailProvider(),
+      audiences: {
+        all: all.length,
+        approved: approved.length,
+        pending: pending.length,
+        attending: attending.length,
+      },
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/admin/broadcast — send a custom email to a chosen audience.
+// Body: { subject, message, audience }
+router.post('/broadcast', async (req, res, next) => {
+  try {
+    if (!isEmailEnabled()) {
+      return res.status(400).json({
+        error: 'Email is not configured. Set RESEND_API_KEY and EMAIL_FROM.',
+      });
+    }
+
+    const { subject, message, audience = 'approved' } = req.body || {};
+    if (!subject || !String(subject).trim()) {
+      return res.status(400).json({ error: 'Subject is required' });
+    }
+    if (!message || !String(message).trim()) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    if (!['all', 'approved', 'pending', 'attending'].includes(audience)) {
+      return res.status(400).json({ error: 'Invalid audience' });
+    }
+
+    const recipients = await resolveRecipients(audience);
+    if (recipients.length === 0) {
+      return res.status(400).json({ error: 'No recipients match that audience' });
+    }
+
+    const result = await sendBroadcast({
+      subject: String(subject).trim(),
+      message: String(message),
+      recipients,
+    });
+
+    return res.json({
+      ok: result.errors.length === 0,
+      sent: result.sent,
+      total: result.total,
+      errors: result.errors,
     });
   } catch (err) {
     return next(err);
