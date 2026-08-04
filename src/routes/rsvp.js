@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { Response } from '../models/Response.js';
+import { User } from '../models/User.js';
 import { requireAuth } from '../middleware/auth.js';
+import { sendRsvpConfirmation } from '../services/email.js';
 
 const router = Router();
 
@@ -68,6 +70,18 @@ router.put('/', requireAuth, async (req, res, next) => {
       },
       { new: true, upsert: true, setDefaultsOnInsert: true },
     );
+
+    // Send an RSVP confirmation. Awaited (serverless-safe) but never blocks
+    // a successful save if email fails.
+    try {
+      const user = await User.findById(req.user.id).lean();
+      if (user?.email) {
+        const mail = await sendRsvpConfirmation(user, r);
+        if (!mail.ok && !mail.skipped) console.warn('RSVP email failed:', mail.error);
+      }
+    } catch (e) {
+      console.warn('RSVP email error:', e.message);
+    }
 
     return res.json({ response: shapeResponse(r) });
   } catch (err) {

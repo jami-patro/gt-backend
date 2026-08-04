@@ -29,6 +29,8 @@ export const config = {
         const m = entry.match(/^(.*?)\s*[-–:]\s*(.+)$/);
         return m ? { name: m[1].trim(), phone: m[2].trim() } : { name: entry, phone: '' };
       }),
+    // Optional WhatsApp group invite link (https://chat.whatsapp.com/...).
+    whatsappUrl: process.env.WHATSAPP_URL || '',
   },
   admin: {
     name: process.env.ADMIN_NAME || 'Reunion Admin',

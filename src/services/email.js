@@ -158,6 +158,28 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDeta
     ? `<tr><td style="padding-top:8px;">${eventDetailsBlock()}</td></tr>`
     : '';
 
+  const waUrl = config.event.whatsappUrl;
+  const whatsapp =
+    showEventDetails && waUrl && /^https:\/\//.test(waUrl)
+      ? `<tr><td style="padding-top:12px;">
+           <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;">
+             <tr><td style="padding:14px 18px;">
+               <div style="font-size:14px;color:#166534;font-weight:600;margin-bottom:8px;">
+                 💬 Join the batch WhatsApp group
+               </div>
+               <div style="font-size:13px;color:#3f6212;margin-bottom:10px;">
+                 Stay in the loop with updates and plans.
+               </div>
+               <a href="${waUrl}" style="display:inline-block;background:#25D366;color:#ffffff;
+                  text-decoration:none;font-weight:700;padding:10px 18px;border-radius:8px;font-size:14px;">
+                 Join the group
+               </a>
+             </td></tr>
+           </table>
+         </td></tr>`
+      : '';
+
   return `<!doctype html>
 <html>
 <body style="margin:0;background:#f1f5f9;padding:24px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;">
@@ -179,6 +201,7 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDeta
           <tr><td style="font-size:15px;color:#334155;">${bodyHtml}</td></tr>
           ${cta}
           ${details}
+          ${whatsapp}
         </table>
         <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 16px;"/>
         <p style="font-size:12px;color:#94a3b8;margin:0 0 6px;line-height:1.6;">
@@ -289,6 +312,71 @@ export async function sendWelcomeEmail(user) {
 }
 
 const firstNameOf = (name) => (name || '').trim().split(/\s+/)[0] || 'there';
+
+// RSVP confirmation — sent when a member submits or updates their response.
+export async function sendRsvpConfirmation(user, response) {
+  const first = firstNameOf(user.name);
+  const attendanceLabel =
+    { yes: "Yes, I'll be there 🎉", no: "Can't make it", maybe: 'Maybe' }[response.attendance] ||
+    response.attendance;
+  const foodLabel =
+    response.foodPreference === 'non_veg' ? 'Non-veg' : response.foodPreference === 'veg' ? 'Veg' : '—';
+
+  const rows = [
+    ['Attendance', attendanceLabel],
+    ['Food preference', foodLabel],
+  ];
+  if (response.tshirtSize) rows.push(['T-shirt size', response.tshirtSize]);
+
+  const summary = rows
+    .map(
+      ([label, value]) =>
+        `<tr>
+           <td style="padding:6px 0;font-size:13px;color:#64748b;width:140px;">${label}</td>
+           <td style="padding:6px 0;font-size:14px;color:#0f172a;font-weight:600;">${escapeHtml(String(value))}</td>
+         </tr>`,
+    )
+    .join('');
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px;line-height:1.6;">Hi ${escapeHtml(first)},</p>
+    <p style="margin:0 0 16px;line-height:1.6;">
+      Thanks for your RSVP! We've recorded your response:
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+      style="margin:0 0 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+      <tr><td style="padding:14px 18px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${summary}</table>
+      </td></tr>
+    </table>
+    <p style="margin:0 0 16px;line-height:1.6;">
+      Changed your mind? You can update your RSVP any time by logging back in.
+    </p>`;
+
+  const html = renderEmail({ heading: 'Your RSVP is confirmed ✅', bodyHtml });
+  return sendEmail({
+    to: user.email,
+    subject: `RSVP confirmed — ${config.event.name}`,
+    html,
+  });
+}
+
+// Bulk RSVP confirmations — used to backfill/resend to everyone who has
+// already responded. `items` is an array of { user, response }.
+export async function sendRsvpConfirmationsBulk(items, concurrency = 5) {
+  const results = { sent: 0, total: items.length, errors: [] };
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < items.length) {
+      const { user, response } = items[cursor++];
+      const res = await sendRsvpConfirmation(user, response);
+      if (res.ok) results.sent += 1;
+      else results.errors.push(`${user.email}: ${res.error}`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
 
 // Admin broadcast. Sends an INDIVIDUAL, personalized email to each recipient
 // ("Hi <FirstName>,") rather than one BCC blast. Runs a few sends in parallel

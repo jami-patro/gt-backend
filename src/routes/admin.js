@@ -2,7 +2,12 @@ import { Router } from 'express';
 import { User } from '../models/User.js';
 import { Response } from '../models/Response.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
-import { isEmailEnabled, emailProvider, sendBroadcast } from '../services/email.js';
+import {
+  isEmailEnabled,
+  emailProvider,
+  sendBroadcast,
+  sendRsvpConfirmationsBulk,
+} from '../services/email.js';
 
 const router = Router();
 
@@ -327,6 +332,41 @@ router.post('/broadcast', async (req, res, next) => {
       recipients,
     });
 
+    return res.json({
+      ok: result.errors.length === 0,
+      sent: result.sent,
+      total: result.total,
+      errors: result.errors,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/admin/resend-rsvp-confirmations — email every member who has
+// already submitted an RSVP their personalized status. Useful for the
+// existing batchmates who responded before confirmation emails existed.
+router.post('/resend-rsvp-confirmations', async (_req, res, next) => {
+  try {
+    if (!isEmailEnabled()) {
+      return res.status(400).json({
+        error: 'Email is not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD.',
+      });
+    }
+
+    const responses = await Response.find({})
+      .populate('user', 'name email role')
+      .lean();
+
+    const items = responses
+      .filter((r) => r.user && r.user.role === 'user' && r.user.email)
+      .map((r) => ({ user: r.user, response: r }));
+
+    if (items.length === 0) {
+      return res.status(400).json({ error: 'No RSVPs to send' });
+    }
+
+    const result = await sendRsvpConfirmationsBulk(items);
     return res.json({
       ok: result.errors.length === 0,
       sent: result.sent,
