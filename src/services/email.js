@@ -92,6 +92,28 @@ function prettyEventDate() {
   }
 }
 
+// Plain-text event details + WhatsApp + disclaimer, appended to the text
+// version of templated emails. Mirrors the HTML footer content.
+function emailFooterText() {
+  const { venue, time, locationUrl, whatsappUrl } = config.event;
+  const lines = ['', 'Event details', `Date: ${prettyEventDate()}`];
+  if (time) lines.push(`Time: ${time}`);
+  if (venue) {
+    lines.push(
+      `Venue: ${venue}${locationUrl ? ` (${locationUrl})` : ' (exact venue to be announced)'}`,
+    );
+  }
+  const contacts = contactListText();
+  if (contacts) lines.push(`Contact: ${contacts}`);
+  if (whatsappUrl) lines.push('', `Join the WhatsApp group: ${whatsappUrl}`);
+  lines.push(
+    '',
+    'Please do not reply to this email — this inbox is not monitored.',
+    config.event.name,
+  );
+  return lines.join('\n');
+}
+
 // Plain-text "Name (phone)" list for the disclaimer.
 function contactListText() {
   return (config.event.contacts || [])
@@ -304,10 +326,19 @@ export async function sendWelcomeEmail(user) {
     ctaUrl: siteUrl || undefined,
   });
 
+  const text =
+    `Hi ${firstNameOf(user.name)},\n\n` +
+    `You're on the list! Thanks for registering for the ${config.event.name}. ` +
+    `An organizer will approve your registration shortly, after which your RSVP will be counted.\n\n` +
+    `You can log in any time to update your attendance, food preference, T-shirt size and leave a message for the batch.\n` +
+    (siteUrl ? `\nOpen the reunion site: ${siteUrl}\n` : '') +
+    emailFooterText();
+
   return sendEmail({
     to: user.email,
     subject: `Welcome to the ${config.event.name}`,
     html,
+    text,
   });
 }
 
@@ -354,10 +385,20 @@ export async function sendRsvpConfirmation(user, response) {
     </p>`;
 
   const html = renderEmail({ heading: 'Your RSVP is confirmed ✅', bodyHtml });
+
+  const summaryText = rows.map(([label, value]) => `${label}: ${value}`).join('\n');
+  const text =
+    `Hi ${first},\n\n` +
+    `Thanks for your RSVP! We've recorded your response:\n\n` +
+    `${summaryText}\n\n` +
+    `Changed your mind? You can update your RSVP any time by logging back in.\n` +
+    emailFooterText();
+
   return sendEmail({
     to: user.email,
     subject: `RSVP confirmed — ${config.event.name}`,
     html,
+    text,
   });
 }
 
