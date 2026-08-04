@@ -15,6 +15,20 @@ export const config = {
   event: {
     name: process.env.EVENT_NAME || 'OEC Silver Jubilee 1997-2001 Batch Reunion',
     date: process.env.EVENT_DATE || '2026-12-19',
+    venue: process.env.EVENT_VENUE || 'Bhubaneswar',
+    // Optional Google Maps (or any) link to the venue.
+    locationUrl: process.env.EVENT_LOCATION_URL || '',
+    time: process.env.EVENT_TIME || '5:00 PM – 10:00 PM (TBD)',
+    // One or more contacts, comma-separated. Each may be "Name" or
+    // "Name - phone" (e.g. "Mrunal Jena - 9876543210, Srikanta Patro - 9123456789").
+    contacts: (process.env.EVENT_CONTACT || 'Mrunal Jena')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const m = entry.match(/^(.*?)\s*[-–:]\s*(.+)$/);
+        return m ? { name: m[1].trim(), phone: m[2].trim() } : { name: entry, phone: '' };
+      }),
   },
   admin: {
     name: process.env.ADMIN_NAME || 'Reunion Admin',

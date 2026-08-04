@@ -37,21 +37,17 @@ function resolveFrom() {
   return config.email.from;
 }
 
-// A bare address safe to use as a visible "To" on broadcasts (recipients
-// go in BCC). Falls back to the Gmail account address.
-function senderAddress() {
-  if (gmailConfigured()) return config.email.gmailUser;
-  // Strip a possible "Name <addr>" wrapper from the Resend from value.
-  const m = /<([^>]+)>/.exec(config.email.from);
-  return m ? m[1] : config.email.from;
-}
-
 // Lazily-created, cached SMTP transport (reused across warm invocations).
 let _transport = null;
 function getTransport() {
   if (!_transport) {
     _transport = nodemailer.createTransport({
       service: 'gmail',
+      // Pool connections so a personalized broadcast to many recipients
+      // reuses a few SMTP connections instead of opening one per email.
+      pool: true,
+      maxConnections: 5,
+      maxMessages: 100,
       auth: {
         user: config.email.gmailUser,
         pass: config.email.gmailAppPassword,
@@ -82,7 +78,73 @@ export function plainTextToHtml(text = '') {
 
 // Branded HTML shell shared by every email we send. `bodyHtml` is inserted
 // as-is, so callers must pass already-safe HTML.
-export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl }) {
+// A nicely formatted long date, e.g. "Saturday, December 19, 2026".
+function prettyEventDate() {
+  try {
+    return new Date(config.event.date).toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  } catch {
+    return config.event.date;
+  }
+}
+
+// Plain-text "Name (phone)" list for the disclaimer.
+function contactListText() {
+  return (config.event.contacts || [])
+    .map((c) => (c.phone ? `${c.name} (${c.phone})` : c.name))
+    .join(', ');
+}
+
+// HTML "Name — <tel link>" list for the details block.
+function contactListHtml() {
+  return (config.event.contacts || [])
+    .map((c) => {
+      const name = escapeHtml(c.name);
+      if (!c.phone) return name;
+      const tel = c.phone.replace(/[^\d+]/g, '');
+      return `${name} — <a href="tel:${tel}" style="color:#2563eb;text-decoration:none;">${escapeHtml(c.phone)}</a>`;
+    })
+    .join('<br/>');
+}
+
+// Event details card shown in every email, under the message body.
+function eventDetailsBlock() {
+  const { venue, time, locationUrl } = config.event;
+  const row = (label, value) =>
+    `<tr>
+       <td style="padding:6px 0;font-size:13px;color:#64748b;width:90px;vertical-align:top;">${label}</td>
+       <td style="padding:6px 0;font-size:14px;color:#0f172a;font-weight:600;">${value}</td>
+     </tr>`;
+
+  const mapLink =
+    locationUrl && /^https?:\/\//.test(locationUrl)
+      ? ` &nbsp;<a href="${locationUrl}" style="color:#2563eb;font-weight:600;">View on map</a>`
+      : '';
+  const contacts = contactListHtml();
+
+  return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+      style="margin:8px 0 4px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;">
+      <tr><td style="padding:16px 18px;">
+        <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">
+          Event details
+        </div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          ${row('📅 Date', escapeHtml(prettyEventDate()))}
+          ${time ? row('🕔 Time', escapeHtml(time)) : ''}
+          ${venue ? row('📍 Venue', escapeHtml(venue) + mapLink)
+            + `<tr><td></td><td style="font-size:12px;color:#94a3b8;padding-bottom:6px;">Exact venue to be announced</td></tr>` : ''}
+          ${contacts ? row('📞 Contact', contacts) : ''}
+        </table>
+      </td></tr>
+    </table>`;
+}
+
+export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDetails = true }) {
   const siteUrl = config.frontendUrls[0] || '';
   const cta =
     ctaLabel && ctaUrl
@@ -92,6 +154,9 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl }) {
               font-size:15px;">${escapeHtml(ctaLabel)}</a>
          </td></tr>`
       : '';
+  const details = showEventDetails
+    ? `<tr><td style="padding-top:8px;">${eventDetailsBlock()}</td></tr>`
+    : '';
 
   return `<!doctype html>
 <html>
@@ -113,8 +178,14 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl }) {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr><td style="font-size:15px;color:#334155;">${bodyHtml}</td></tr>
           ${cta}
+          ${details}
         </table>
         <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 16px;"/>
+        <p style="font-size:12px;color:#94a3b8;margin:0 0 6px;line-height:1.6;">
+          Please do not reply to this email — this inbox is not monitored.${
+            contactListText() ? ` For any queries, contact ${escapeHtml(contactListText())}.` : ''
+          }
+        </p>
         <p style="font-size:12px;color:#94a3b8;margin:0;line-height:1.6;">
           ${escapeHtml(config.event.name)}${
             siteUrl && /^https:\/\//.test(siteUrl)
@@ -217,34 +288,35 @@ export async function sendWelcomeEmail(user) {
   });
 }
 
-// Admin broadcast. Sends the same message to many recipients via BCC,
-// chunked so a single request stays fast and within provider limits.
-export async function sendBroadcast({ subject, message, recipients, replyTo }) {
-  const bodyHtml = plainTextToHtml(message);
-  const html = renderEmail({ bodyHtml });
-  const siteUrl = config.frontendUrls[0] || '';
+const firstNameOf = (name) => (name || '').trim().split(/\s+/)[0] || 'there';
 
-  const CHUNK = 45; // keep well under provider per-message recipient limits
-  const chunks = [];
-  for (let i = 0; i < recipients.length; i += CHUNK) {
-    chunks.push(recipients.slice(i, i + CHUNK));
-  }
+// Admin broadcast. Sends an INDIVIDUAL, personalized email to each recipient
+// ("Hi <FirstName>,") rather than one BCC blast. Runs a few sends in parallel
+// (bounded concurrency) so a large batch completes quickly.
+// `recipients` is an array of { name, email }.
+export async function sendBroadcast({ subject, message, recipients, replyTo, concurrency = 5 }) {
+  const results = { sent: 0, total: recipients.length, errors: [] };
+  let cursor = 0;
 
-  let sent = 0;
-  const errors = [];
-  for (const group of chunks) {
-    const result = await sendEmail({
-      // "to" the sender/admin, everyone else BCC'd for privacy.
-      to: senderAddress(),
-      bcc: group,
-      subject,
-      html,
-      text: `${message}\n\n${siteUrl}`,
-      replyTo,
-    });
-    if (result.ok) sent += group.length;
-    else errors.push(result.error);
-  }
+  const sendOne = async (r) => {
+    const first = firstNameOf(r.name);
+    const greetingHtml = `<p style="margin:0 0 16px;line-height:1.6;">Hi ${escapeHtml(first)},</p>`;
+    const bodyHtml = greetingHtml + plainTextToHtml(message);
+    const html = renderEmail({ bodyHtml });
+    const text = `Hi ${first},\n\n${message}`;
+    const res = await sendEmail({ to: r.email, subject, html, text, replyTo });
+    if (res.ok) results.sent += 1;
+    else results.errors.push(`${r.email}: ${res.error}`);
+  };
 
-  return { sent, total: recipients.length, errors };
+  const worker = async () => {
+    while (cursor < recipients.length) {
+      const r = recipients[cursor++];
+      await sendOne(r);
+    }
+  };
+
+  const pool = Array.from({ length: Math.min(concurrency, recipients.length) }, worker);
+  await Promise.all(pool);
+  return results;
 }

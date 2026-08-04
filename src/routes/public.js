@@ -7,7 +7,14 @@ const router = Router();
 
 // GET /api/public/event — event metadata for the landing page
 router.get('/event', (_req, res) => {
-  return res.json({ name: config.event.name, date: config.event.date });
+  return res.json({
+    name: config.event.name,
+    date: config.event.date,
+    venue: config.event.venue,
+    locationUrl: config.event.locationUrl,
+    time: config.event.time,
+    contacts: config.event.contacts,
+  });
 });
 
 // GET /api/public/stats — live vote counts + headcount for the landing page

@@ -235,16 +235,17 @@ router.patch('/records/:id', async (req, res, next) => {
   }
 });
 
-// Resolve the recipient list for a broadcast audience.
+// Resolve the recipient list for a broadcast audience. Returns { name, email }
+// objects so broadcasts can be personalized.
 // audience: 'all' | 'approved' | 'pending' | 'attending'
 async function resolveRecipients(audience) {
   if (audience === 'attending') {
     const responses = await Response.find({ attendance: 'yes' })
-      .populate('user', 'email role approved')
+      .populate('user', 'name email role approved')
       .lean();
     return responses
       .filter((r) => r.user && r.user.role === 'user' && r.user.approved && r.user.email)
-      .map((r) => r.user.email);
+      .map((r) => ({ name: r.user.name, email: r.user.email }));
   }
 
   const query = { role: 'user' };
@@ -252,8 +253,8 @@ async function resolveRecipients(audience) {
   if (audience === 'pending') query.approved = false;
   // 'all' → every non-admin member
 
-  const users = await User.find(query, 'email').lean();
-  return users.map((u) => u.email).filter(Boolean);
+  const users = await User.find(query, 'name email').lean();
+  return users.filter((u) => u.email).map((u) => ({ name: u.name, email: u.email }));
 }
 
 // GET /api/admin/email/status — is email configured, and audience counts
@@ -290,20 +291,34 @@ router.post('/broadcast', async (req, res, next) => {
       });
     }
 
-    const { subject, message, audience = 'approved' } = req.body || {};
+    const { subject, message, audience, recipients: explicit } = req.body || {};
     if (!subject || !String(subject).trim()) {
       return res.status(400).json({ error: 'Subject is required' });
     }
     if (!message || !String(message).trim()) {
       return res.status(400).json({ error: 'Message is required' });
     }
-    if (!['all', 'approved', 'pending', 'attending'].includes(audience)) {
-      return res.status(400).json({ error: 'Invalid audience' });
+
+    let recipients;
+    if (Array.isArray(explicit) && explicit.length > 0) {
+      // Explicit selection from the admin picker. Restrict to real members
+      // so the endpoint can't be used to email arbitrary addresses.
+      const wanted = explicit.map((e) => String(e).toLowerCase().trim());
+      const members = await User.find(
+        { role: 'user', email: { $in: wanted } },
+        'name email',
+      ).lean();
+      recipients = members.map((u) => ({ name: u.name, email: u.email }));
+    } else {
+      const aud = audience || 'approved';
+      if (!['all', 'approved', 'pending', 'attending'].includes(aud)) {
+        return res.status(400).json({ error: 'Invalid audience' });
+      }
+      recipients = await resolveRecipients(aud);
     }
 
-    const recipients = await resolveRecipients(audience);
     if (recipients.length === 0) {
-      return res.status(400).json({ error: 'No recipients match that audience' });
+      return res.status(400).json({ error: 'No valid recipients selected' });
     }
 
     const result = await sendBroadcast({
