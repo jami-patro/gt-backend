@@ -4,3 +4,7 @@ node_modules/
 *.log
 .vercel
 PAYMENT_QR_DESIGN.md
+
+# Local one-off test/debug scripts (kept on disk, not committed)
+check_proof.js
+test_under_review.js
