@@ -259,19 +259,35 @@ export async function sendEmail({ to, bcc, subject, html, text, replyTo }) {
   return sendViaResend({ to, bcc, subject, html, text, replyTo: reply });
 }
 
-async function sendViaGmail({ to, bcc, subject, html, text, replyTo }) {
+// Transient network errors where a fresh SMTP connection is worth a retry.
+const TRANSIENT_SMTP = ['ECONNRESET', 'ETIMEDOUT', 'ESOCKET', 'ECONNECTION', 'EPIPE'];
+
+async function sendViaGmail({ to, bcc, subject, html, text, replyTo }, attempt = 1) {
+  const message = {
+    from: resolveFrom(),
+    to: to || undefined,
+    bcc: bcc || undefined,
+    replyTo,
+    subject,
+    html,
+    text,
+  };
   try {
-    const info = await getTransport().sendMail({
-      from: resolveFrom(),
-      to: to || undefined,
-      bcc: bcc || undefined,
-      replyTo,
-      subject,
-      html,
-      text,
-    });
+    const info = await getTransport().sendMail(message);
     return { ok: true, id: info.messageId };
   } catch (err) {
+    const transient = TRANSIENT_SMTP.includes(err.code) || /ECONNRESET|socket|timed out/i.test(err.message || '');
+    if (transient && attempt < 3) {
+      // A pooled connection likely went stale — drop it and retry on a fresh one.
+      try {
+        _transport?.close();
+      } catch {
+        /* ignore */
+      }
+      _transport = null;
+      await new Promise((r) => setTimeout(r, 400 * attempt));
+      return sendViaGmail({ to, bcc, subject, html, text, replyTo }, attempt + 1);
+    }
     return { ok: false, error: err.message };
   }
 }
@@ -397,6 +413,69 @@ export async function sendRsvpConfirmation(user, response) {
   return sendEmail({
     to: user.email,
     subject: `RSVP confirmed — ${config.event.name}`,
+    html,
+    text,
+  });
+}
+
+// Payment receipt — sent when an admin confirms a member's contribution.
+export async function sendPaymentReceipt(user) {
+  const first = firstNameOf(user.name);
+  const amt = Number(user.contributionAmount) || 0;
+  const amountLine = amt > 0 ? `₹${amt.toLocaleString('en-IN')}` : 'your contribution';
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px;line-height:1.6;">Hi ${escapeHtml(first)},</p>
+    <p style="margin:0 0 16px;line-height:1.6;">
+      We've received <strong>${escapeHtml(amountLine)}</strong> towards the reunion — thank you!
+      Your contribution is confirmed. 🎉
+    </p>
+    <p style="margin:0 0 16px;line-height:1.6;">
+      See you at the celebration.
+    </p>`;
+
+  const html = renderEmail({ heading: 'Payment received ✅', bodyHtml });
+  const text =
+    `Hi ${first},\n\n` +
+    `We've received ${amountLine} towards the reunion — thank you! Your contribution is confirmed.\n\n` +
+    `See you at the celebration.\n` +
+    emailFooterText();
+
+  return sendEmail({
+    to: user.email,
+    subject: `Payment received — ${config.event.name}`,
+    html,
+    text,
+  });
+}
+
+// Acknowledgment sent as soon as a member submits their payment proof.
+// Lets them know it's received and pending organizer confirmation.
+export async function sendPaymentUnderReview(user) {
+  const first = firstNameOf(user.name);
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px;line-height:1.6;">Hi ${escapeHtml(first)},</p>
+    <p style="margin:0 0 16px;line-height:1.6;">
+      Thanks — we've received your payment details and they're now
+      <strong>under review</strong>. The organizers will verify and confirm your
+      contribution shortly; you'll get another email once it's marked as received.
+    </p>
+    <p style="margin:0 0 16px;line-height:1.6;">
+      No action needed from your side. Thank you for contributing! 🙏
+    </p>`;
+
+  const html = renderEmail({ heading: 'Payment details received 🧾', bodyHtml });
+  const text =
+    `Hi ${first},\n\n` +
+    `Thanks — we've received your payment details and they're now under review. ` +
+    `The organizers will verify and confirm your contribution shortly; you'll get another ` +
+    `email once it's marked as received.\n\nNo action needed. Thank you for contributing!\n` +
+    emailFooterText();
+
+  return sendEmail({
+    to: user.email,
+    subject: `We got your payment details — ${config.event.name}`,
     html,
     text,
   });

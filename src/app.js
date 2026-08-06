@@ -14,7 +14,9 @@ import adminRoutes from './routes/admin.js';
 const app = express();
 
 app.use(helmet());
-app.use(express.json({ limit: '100kb' }));
+// 2mb accommodates compressed payment-screenshot uploads (base64). Regular
+// JSON requests are tiny; this is a low-traffic app so the surface is minimal.
+app.use(express.json({ limit: '2mb' }));
 app.use(
   cors({
     origin(origin, cb) {

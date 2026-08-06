@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { User } from '../models/User.js';
 import { Response } from '../models/Response.js';
+import { Setting } from '../models/Setting.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -15,6 +16,37 @@ router.get('/event', (_req, res) => {
     time: config.event.time,
     contacts: config.event.contacts,
   });
+});
+
+// GET /api/public/payment — contribution amount + payment methods (public info)
+router.get('/payment', async (_req, res, next) => {
+  try {
+    const { amount, note, methods, ready: envReady, comingSoonNote } = config.payment;
+    // The admin toggle (DB) is the source of truth; fall back to the env
+    // default (PAYMENT_READY) only when it has never been set.
+    const dbOpen = await Setting.get('paymentOpen', null);
+    const ready = dbOpen === null ? envReady : Boolean(dbOpen);
+
+    // Per-method publish state lives in the DB so the admin can enable/disable
+    // individual QR codes without a redeploy. A method is published unless it
+    // has been explicitly disabled.
+    const methodState = (await Setting.get('paymentMethodState', {})) || {};
+    const publishedMethods = methods.filter((_m, i) => methodState[i] !== false);
+
+    return res.json({
+      // `enabled` = payment is configured AND open AND at least one method is live.
+      // `configured` = methods exist but may not be open yet (coming-soon state).
+      configured: methods.length > 0,
+      enabled: publishedMethods.length > 0 && ready,
+      ready,
+      comingSoonNote,
+      amount,
+      note,
+      methods: publishedMethods, // [{ label, upiId, payeeName, qr }] — only published ones
+    });
+  } catch (err) {
+    return next(err);
+  }
 });
 
 // GET /api/public/stats — live vote counts + headcount for the landing page
@@ -64,6 +96,30 @@ router.get('/stats', async (_req, res, next) => {
       food: { veg: agg?.veg || 0, nonVeg: agg?.nonVeg || 0 },
       extraGuests,
       headcount: attending + extraGuests,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/public/contributors — public "thank you" wall of members who have
+// PAID. Intentionally exposes only paid members' names + branch and a count.
+// It never reveals who hasn't paid / is pending / rejected, nor any amounts —
+// that stays private in the admin dashboard.
+router.get('/contributors', async (_req, res, next) => {
+  try {
+    const rows = await User.find({
+      role: 'user',
+      approved: true,
+      paymentStatus: 'paid',
+    })
+      .select('name branch')
+      .sort({ name: 1 })
+      .lean();
+
+    return res.json({
+      count: rows.length,
+      contributors: rows.map((u) => ({ name: u.name, branch: u.branch || null })),
     });
   } catch (err) {
     return next(err);
