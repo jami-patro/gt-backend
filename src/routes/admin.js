@@ -1,12 +1,15 @@
 import { Router } from 'express';
 import { User } from '../models/User.js';
 import { Response } from '../models/Response.js';
+import { Setting } from '../models/Setting.js';
+import { config } from '../config.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import {
   isEmailEnabled,
   emailProvider,
   sendBroadcast,
   sendRsvpConfirmationsBulk,
+  sendPaymentReceipt,
 } from '../services/email.js';
 
 const router = Router();
@@ -16,9 +19,20 @@ router.use(requireAuth, requireAdmin);
 
 // Builds a combined list of members + their responses, sorted by name.
 async function buildRecords() {
-  const users = await User.find({ role: 'user' }).sort({ name: 1 }).lean();
+  const users = await User.find({ role: 'user' })
+    .select('-paymentProof -passwordHash')
+    .sort({ name: 1 })
+    .lean();
   const responses = await Response.find({}).lean();
   const byUser = new Map(responses.map((r) => [String(r.user), r]));
+
+  // The screenshot blob is excluded above for payload size, so we can't derive
+  // "has a screenshot" from `u.paymentProof`. Fetch just the ids of members
+  // who have a stored image instead.
+  const withImage = await User.find({ role: 'user', paymentProof: { $ne: null } })
+    .select('_id')
+    .lean();
+  const imageIds = new Set(withImage.map((u) => String(u._id)));
 
   return users.map((u) => {
     const r = byUser.get(String(u._id));
@@ -32,6 +46,13 @@ async function buildRecords() {
       approved: u.approved,
       paymentStatus: u.paymentStatus || 'not_paid',
       contributionAmount: u.contributionAmount ?? 0,
+      paymentNote: u.paymentNote || null,
+      paymentTransactionId: u.paymentTransactionId || null,
+      paymentMethodUsed: u.paymentMethodUsed || null,
+      paymentRejectReason: u.paymentRejectReason || null,
+      paymentProofUploadedAt: u.paymentProofUploadedAt || null,
+      hasProof: imageIds.has(String(u._id)),
+      hasProofOrTxn: imageIds.has(String(u._id)) || Boolean(u.paymentTransactionId),
       createdAt: u.createdAt,
       attendance: r?.attendance || null,
       foodPreference: r?.foodPreference || null,
@@ -42,6 +63,70 @@ async function buildRecords() {
     };
   });
 }
+
+// GET /api/admin/settings — runtime-toggleable settings (currently just the
+// payment open/closed switch). Reflects the DB value, or the env default when
+// it has never been toggled.
+router.get('/settings', async (_req, res, next) => {
+  try {
+    const dbOpen = await Setting.get('paymentOpen', null);
+    const paymentOpen = dbOpen === null ? config.payment.ready : Boolean(dbOpen);
+    const methodState = (await Setting.get('paymentMethodState', {})) || {};
+    // Full catalog with each method's published state (default = published).
+    const methods = config.payment.methods.map((m, i) => ({
+      id: i,
+      label: m.label,
+      upiId: m.upiId,
+      payeeName: m.payeeName,
+      phone: m.phone,
+      qr: m.qr,
+      enabled: methodState[i] !== false,
+    }));
+    return res.json({
+      paymentOpen,
+      paymentConfigured: config.payment.methods.length > 0,
+      methods,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PATCH /api/admin/settings/payment-open — open or close contributions.
+// Body: { open: true|false }. Takes effect immediately, no redeploy.
+router.patch('/settings/payment-open', async (req, res, next) => {
+  try {
+    const { open } = req.body || {};
+    if (typeof open !== 'boolean') {
+      return res.status(400).json({ error: 'open (boolean) is required' });
+    }
+    await Setting.set('paymentOpen', open);
+    return res.json({ paymentOpen: open });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PATCH /api/admin/settings/payment-method — publish/hide a single QR/method.
+// Body: { index: number, enabled: true|false }. Immediate, no redeploy.
+router.patch('/settings/payment-method', async (req, res, next) => {
+  try {
+    const { index, enabled } = req.body || {};
+    const i = Number(index);
+    if (!Number.isInteger(i) || i < 0 || i >= config.payment.methods.length) {
+      return res.status(400).json({ error: 'valid method index is required' });
+    }
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled (boolean) is required' });
+    }
+    const state = (await Setting.get('paymentMethodState', {})) || {};
+    state[i] = enabled;
+    await Setting.set('paymentMethodState', state);
+    return res.json({ index: i, enabled });
+  } catch (err) {
+    return next(err);
+  }
+});
 
 // GET /api/admin/responses — full list of members and their responses
 router.get('/responses', async (_req, res, next) => {
@@ -59,9 +144,19 @@ router.get('/export.csv', async (_req, res, next) => {
 
     const headers = [
       'Name', 'Email', 'Phone', 'Branch', 'Roll Number', 'Approved',
-      'Attendance', 'Food', 'Guests', 'T-Shirt', 'Payment', 'Contribution (INR)',
+      'Attendance', 'Food', 'Guests', 'T-Shirt',
+      'Payment Status', 'Contribution (INR)', 'Payment Reference Note',
+      'Transaction / UTR', 'Payment Method', 'Payment Uploaded At', 'Reject Reason',
       'Message', 'Responded At', 'Registered At',
     ];
+
+    // Human-friendly payment status labels for the sheet.
+    const PAY_LABEL = {
+      paid: 'Paid',
+      pending: 'Under review',
+      rejected: 'Rejected',
+      not_paid: 'Not paid',
+    };
 
     const esc = (v) => {
       const s = v === null || v === undefined ? '' : String(v);
@@ -73,7 +168,8 @@ router.get('/export.csv', async (_req, res, next) => {
       lines.push([
         r.name, r.email, r.phone, r.branch, r.rollNumber, r.approved ? 'Yes' : 'No',
         r.attendance, r.foodPreference, r.guests, r.tshirtSize,
-        r.paymentStatus === 'paid' ? 'Paid' : 'Not paid', r.contributionAmount,
+        PAY_LABEL[r.paymentStatus] || 'Not paid', r.contributionAmount, r.paymentNote,
+        r.paymentTransactionId, r.paymentMethodUsed, r.paymentProofUploadedAt, r.paymentRejectReason,
         r.message, r.respondedAt, r.createdAt,
       ].map(esc).join(','));
     }
@@ -110,17 +206,23 @@ router.patch('/users/:id/approval', async (req, res, next) => {
 });
 
 // PATCH /api/admin/users/:id/payment — update contribution status/amount.
-// Body: { paymentStatus?: 'paid'|'not_paid', contributionAmount?: number }
+// Body: { paymentStatus?, contributionAmount?, rejectReason? }
+const PAYMENT_STATES = ['not_paid', 'pending', 'paid', 'rejected'];
 router.patch('/users/:id/payment', async (req, res, next) => {
   try {
-    const { paymentStatus, contributionAmount } = req.body || {};
+    const { paymentStatus, contributionAmount, rejectReason } = req.body || {};
     const update = {};
 
     if (paymentStatus !== undefined) {
-      if (!['paid', 'not_paid'].includes(paymentStatus)) {
-        return res.status(400).json({ error: 'paymentStatus must be paid or not_paid' });
+      if (!PAYMENT_STATES.includes(paymentStatus)) {
+        return res.status(400).json({ error: `paymentStatus must be one of ${PAYMENT_STATES.join(', ')}` });
       }
       update.paymentStatus = paymentStatus;
+      // Reject reason only meaningful for the rejected state.
+      update.paymentRejectReason =
+        paymentStatus === 'rejected' ? String(rejectReason || '').slice(0, 300) || 'Please re-upload' : null;
+      // Resetting to "not paid" also clears the recorded amount.
+      if (paymentStatus === 'not_paid') update.contributionAmount = 0;
     }
     if (contributionAmount !== undefined) {
       const amt = Number(contributionAmount);
@@ -139,7 +241,82 @@ router.patch('/users/:id/payment', async (req, res, next) => {
       return res.status(403).json({ error: 'Cannot set payment on an admin account' });
     }
 
+    // Can't mark paid without a contribution amount. Consider the amount from
+    // this request if present, otherwise the existing one.
+    if (update.paymentStatus === 'paid') {
+      const effectiveAmount =
+        update.contributionAmount !== undefined ? update.contributionAmount : target.contributionAmount;
+      if (!(Number(effectiveAmount) > 0)) {
+        return res.status(400).json({ error: 'Enter a contribution amount before marking as paid' });
+      }
+    }
+
+    const wasPaid = target.paymentStatus === 'paid';
     Object.assign(target, update);
+    await target.save();
+
+    // Fire a receipt email when transitioning INTO paid (serverless-safe).
+    if (update.paymentStatus === 'paid' && !wasPaid && target.email) {
+      try {
+        const mail = await sendPaymentReceipt(target);
+        if (!mail.ok && !mail.skipped) console.warn('Receipt email failed:', mail.error);
+      } catch (e) {
+        console.warn('Receipt email error:', e.message);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      paymentStatus: target.paymentStatus,
+      contributionAmount: target.contributionAmount,
+      paymentRejectReason: target.paymentRejectReason || null,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/admin/users/:id/proof — the payment screenshot / txn id + note (lazy-loaded)
+router.get('/users/:id/proof', async (req, res, next) => {
+  try {
+    const u = await User.findById(req.params.id)
+      .select('name paymentProof paymentNote paymentTransactionId paymentMethodUsed paymentProofUploadedAt')
+      .lean();
+    if (!u) return res.status(404).json({ error: 'User not found' });
+    // Allow viewing when there's an image OR a transaction id OR a note.
+    if (!u.paymentProof && !u.paymentTransactionId && !u.paymentNote) {
+      return res.status(404).json({ error: 'No proof provided' });
+    }
+    return res.json({
+      name: u.name,
+      image: u.paymentProof || null,
+      note: u.paymentNote || null,
+      transactionId: u.paymentTransactionId || null,
+      methodUsed: u.paymentMethodUsed || null,
+      uploadedAt: u.paymentProofUploadedAt || null,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// DELETE /api/admin/users/:id/proof — clear a member's submitted payment
+// proof (screenshot + txn id + note + method) and reset them to "not paid".
+router.delete('/users/:id/proof', async (req, res, next) => {
+  try {
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    if (target.role === 'admin') {
+      return res.status(403).json({ error: 'Not applicable to admin accounts' });
+    }
+    target.paymentProof = null;
+    target.paymentTransactionId = null;
+    target.paymentNote = null;
+    target.paymentMethodUsed = null;
+    target.paymentProofUploadedAt = null;
+    target.paymentRejectReason = null;
+    target.paymentStatus = 'not_paid';
+    target.contributionAmount = 0;
     await target.save();
     return res.json({
       ok: true,
@@ -170,7 +347,7 @@ router.patch('/records/:id', async (req, res, next) => {
     if (b.rollNumber !== undefined) user.rollNumber = b.rollNumber ? String(b.rollNumber).trim() : null;
     if (b.approved !== undefined) user.approved = Boolean(b.approved);
     if (b.paymentStatus !== undefined) {
-      if (!['paid', 'not_paid'].includes(b.paymentStatus)) {
+      if (!['not_paid', 'pending', 'paid', 'rejected'].includes(b.paymentStatus)) {
         return res.status(400).json({ error: 'Invalid paymentStatus' });
       }
       user.paymentStatus = b.paymentStatus;

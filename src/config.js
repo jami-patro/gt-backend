@@ -2,6 +2,42 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Parse payment methods from env (JSON array preferred, single-method fallback).
+function parsePaymentMethods() {
+  const raw = process.env.PAYMENT_METHODS;
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return arr
+          .map((m) => ({
+            label: (m.label || '').trim(),
+            upiId: (m.upiId || '').trim(),
+            payeeName: (m.payeeName || '').trim(),
+            phone: (m.phone || '').trim(),
+            qr: (m.qr || m.qrUrl || '').trim(),
+          }))
+          .filter((m) => m.upiId || m.qr || m.phone);
+      }
+    } catch {
+      // fall through to single-method
+    }
+  }
+  const upiId = (process.env.PAYMENT_UPI_ID || '').trim();
+  const qr = (process.env.PAYMENT_QR_URL || '').trim();
+  const phoneOnly = (process.env.PAYMENT_PHONE || '').trim();
+  if (!upiId && !qr && !phoneOnly) return [];
+  return [
+    {
+      label: (process.env.PAYMENT_LABEL || 'UPI').trim(),
+      upiId,
+      payeeName: (process.env.PAYMENT_PAYEE_NAME || '').trim(),
+      phone: (process.env.PAYMENT_PHONE || '').trim(),
+      qr,
+    },
+  ];
+}
+
 export const config = {
   port: Number(process.env.PORT) || 5050,
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -36,6 +72,25 @@ export const config = {
     name: process.env.ADMIN_NAME || 'Reunion Admin',
     email: process.env.ADMIN_EMAIL || 'admin@reunion.com',
     password: process.env.ADMIN_PASSWORD || 'changeme123',
+  },
+  payment: {
+    // Suggested contribution amount in INR (0/blank = "amount TBD").
+    amount: Number(process.env.PAYMENT_AMOUNT) || 0,
+    // Master switch: when false, the contribution section shows a greyed-out
+    // "opens soon" preview and uploads are blocked. Flip to true (and redeploy)
+    // when you're ready to collect. Defaults to false so it's never live by
+    // accident.
+    ready: process.env.PAYMENT_READY === 'true',
+    // Optional message shown while payments aren't open yet.
+    comingSoonNote:
+      process.env.PAYMENT_COMING_SOON_NOTE ||
+      'Contributions open soon — the payment options will be enabled here shortly.',
+    // Short note shown above the payment options.
+    note: process.env.PAYMENT_NOTE || '',
+    // One or more payment methods. Provide as JSON in PAYMENT_METHODS, e.g.
+    // '[{"label":"GPay - Mrunal","upiId":"mrunal@oksbi","payeeName":"Mrunal Jena","qr":"https://.../gpay.png"}]'
+    // Falls back to single method from PAYMENT_UPI_ID / PAYMENT_PAYEE_NAME / PAYMENT_QR_URL.
+    methods: parsePaymentMethods(),
   },
   email: {
     // Provider is auto-detected: Gmail (SMTP) is used when GMAIL_USER +
