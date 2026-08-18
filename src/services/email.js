@@ -360,6 +360,56 @@ export async function sendWelcomeEmail(user) {
 
 const firstNameOf = (name) => (name || '').trim().split(/\s+/)[0] || 'there';
 
+// Password reset — sends a freshly-generated temporary password. We can never
+// resend the original (it's stored only as a bcrypt hash), so we set a new one
+// and email it here.
+export async function sendPasswordReset(user, tempPassword) {
+  const first = firstNameOf(user.name);
+  const siteUrl = config.frontendUrls[0] || '';
+  const loginUrl = siteUrl ? `${siteUrl.replace(/\/$/, '')}/login` : '';
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px;line-height:1.6;">Hi ${escapeHtml(first)},</p>
+    <p style="margin:0 0 16px;line-height:1.6;">
+      We received a request to reset your password. Here's a new temporary password
+      you can log in with:
+    </p>
+    <div style="margin:0 0 16px;text-align:center;">
+      <span style="display:inline-block;background:#f1f5f9;border:1px dashed #94a3b8;border-radius:10px;
+        padding:12px 20px;font-family:monospace;font-size:20px;font-weight:700;letter-spacing:2px;color:#0f172a;">
+        ${escapeHtml(tempPassword)}
+      </span>
+    </div>
+    <p style="margin:0 0 16px;line-height:1.6;">
+      Use this to log in — it replaces your old password. Keep this email private.
+      If you didn't request a reset, someone may have entered your email by mistake;
+      you can safely ignore this, or reset it again yourself from the login page.
+    </p>`;
+
+  const html = renderEmail({
+    heading: 'Your new password 🔑',
+    bodyHtml,
+    ctaLabel: loginUrl ? 'Log in now' : undefined,
+    ctaUrl: loginUrl || undefined,
+    showEventDetails: false,
+  });
+
+  const text =
+    `Hi ${first},\n\n` +
+    `We received a request to reset your password. Here's a new temporary password you can log in with:\n\n` +
+    `    ${tempPassword}\n\n` +
+    `Use this to log in — it replaces your old password. Keep this email private. ` +
+    `If you didn't request a reset, you can safely ignore this email.\n` +
+    (loginUrl ? `\nLog in: ${loginUrl}\n` : '');
+
+  return sendEmail({
+    to: user.email,
+    subject: `Your new password — ${config.event.name}`,
+    html,
+    text,
+  });
+}
+
 // RSVP confirmation — sent when a member submits or updates their response.
 export async function sendRsvpConfirmation(user, response) {
   const first = firstNameOf(user.name);

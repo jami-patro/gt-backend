@@ -38,6 +38,37 @@ function parsePaymentMethods() {
   ];
 }
 
+// Parse the day's programme/schedule from env. Prefer a JSON array in
+// EVENT_SCHEDULE, e.g.
+//   '[{"time":"12:30 PM","title":"Meet & Greet with Lunch"},
+//     {"time":"4:30 PM","title":"Evening Snacks"},
+//     {"time":"7:00 PM","title":"DJ Night & Dinner"}]'
+// Falls back to a default running order if unset.
+function parseSchedule() {
+  const raw = process.env.EVENT_SCHEDULE;
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return arr
+          .map((s) => ({
+            time: (s.time || '').trim(),
+            title: (s.title || '').trim(),
+            description: (s.description || '').trim(),
+          }))
+          .filter((s) => s.title);
+      }
+    } catch {
+      // fall through to defaults
+    }
+  }
+  return [
+    { time: '12:30 PM', title: 'Meet & Greet with Lunch', description: 'Reconnect over a warm welcome lunch.' },
+    { time: '4:30 PM', title: 'Evening Snacks', description: 'Tea, snacks and plenty of catching up.' },
+    { time: '7:00 PM', title: 'DJ Night & Dinner', description: 'Music, dance and dinner to close the day.' },
+  ];
+}
+
 export const config = {
   port: Number(process.env.PORT) || 5050,
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -67,6 +98,8 @@ export const config = {
       }),
     // Optional WhatsApp group invite link (https://chat.whatsapp.com/...).
     whatsappUrl: process.env.WHATSAPP_URL || '',
+    // The day's running order (programme). Edit via EVENT_SCHEDULE (JSON).
+    schedule: parseSchedule(),
   },
   admin: {
     name: process.env.ADMIN_NAME || 'Reunion Admin',

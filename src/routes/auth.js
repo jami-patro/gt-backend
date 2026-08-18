@@ -5,9 +5,10 @@ import {
   verifyPassword,
   signToken,
   isValidEmail,
+  generateTempPassword,
 } from '../utils/auth.js';
 import { requireAuth } from '../middleware/auth.js';
-import { sendWelcomeEmail } from '../services/email.js';
+import { sendWelcomeEmail, sendPasswordReset, isEmailEnabled } from '../services/email.js';
 
 const router = Router();
 
@@ -87,6 +88,63 @@ router.post('/login', async (req, res, next) => {
 
     const token = signToken(user);
     return res.json({ token, user: publicUser(user) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/auth/forgot-password — email the user a new temporary password.
+// The original password is only stored as a bcrypt hash and can't be recovered,
+// so we generate a fresh one, save it, and email it. We always respond with a
+// generic success (even if the email isn't registered) to avoid revealing which
+// addresses have accounts.
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ error: 'Please provide a valid email address' });
+    }
+
+    const user = await User.findOne({ email: String(email).toLowerCase().trim() });
+    // Tell the user directly when the email isn't registered — this is a small
+    // private reunion site, so the clearer UX is worth more than hiding which
+    // addresses exist.
+    if (!user) {
+      return res.status(404).json({
+        error: "That email isn't registered. Please check the spelling, or register to RSVP.",
+      });
+    }
+    // Email provider not configured on the server — can't send anything.
+    if (!isEmailEnabled()) {
+      return res.status(503).json({
+        error: 'Email sending is not set up yet. Please contact the organizers.',
+      });
+    }
+
+    const tempPassword = generateTempPassword(10);
+    user.passwordHash = hashPassword(tempPassword);
+    await user.save();
+
+    let mailOk = true;
+    try {
+      const mail = await sendPasswordReset(user, tempPassword);
+      mailOk = mail.ok || mail.skipped;
+      if (!mailOk) console.warn('Password reset email failed:', mail.error);
+    } catch (e) {
+      mailOk = false;
+      console.warn('Password reset email error:', e.message);
+    }
+
+    if (!mailOk) {
+      return res.status(502).json({
+        error: 'We could not send the email right now. Please try again in a moment.',
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: 'A new password has been sent to your email.',
+    });
   } catch (err) {
     return next(err);
   }
