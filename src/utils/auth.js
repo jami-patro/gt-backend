@@ -1,9 +1,22 @@
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 
 export function hashPassword(plain) {
   return bcrypt.hashSync(plain, 10);
+}
+
+// Generate a readable temporary password for the "forgot password" flow.
+// Avoids ambiguous characters (0/O, 1/l/I) so it's easy to type from an email.
+export function generateTempPassword(length = 10) {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i += 1) {
+    out += chars[bytes[i] % chars.length];
+  }
+  return out;
 }
 
 export function verifyPassword(plain, hash) {

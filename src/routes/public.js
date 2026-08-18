@@ -15,6 +15,7 @@ router.get('/event', (_req, res) => {
     locationUrl: config.event.locationUrl,
     time: config.event.time,
     contacts: config.event.contacts,
+    schedule: config.event.schedule,
   });
 });
 
@@ -132,7 +133,7 @@ router.get('/attendees', async (_req, res, next) => {
   try {
     const rows = await Response.find({ attendance: { $in: ['yes', 'maybe'] } })
       .sort({ updatedAt: -1 })
-      .populate('user', 'name branch approved role')
+      .populate('user', 'name branch approved role paymentStatus')
       .lean();
 
     return res.json({
@@ -144,6 +145,10 @@ router.get('/attendees', async (_req, res, next) => {
           attendance: r.attendance,
           guests: r.guests,
           votedAt: r.updatedAt,
+          // Positive-only flag: true when the member has paid. We never expose
+          // the actual status (pending/rejected/not_paid) publicly — non-payers
+          // simply have `paid: false`, so no one is outed as "unpaid".
+          paid: r.user.paymentStatus === 'paid',
         })),
     });
   } catch (err) {
