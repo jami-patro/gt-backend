@@ -95,14 +95,13 @@ function prettyEventDate() {
 // Plain-text event details + WhatsApp + disclaimer, appended to the text
 // version of templated emails. Mirrors the HTML footer content.
 function emailFooterText() {
-  const { venue, time, locationUrl, whatsappUrl } = config.event;
+  const { venue, time, locationUrl, videoUrl, whatsappUrl } = config.event;
   const lines = ['', 'Event details', `Date: ${prettyEventDate()}`];
   if (time) lines.push(`Time: ${time}`);
   if (venue) {
-    lines.push(
-      `Venue: ${venue}${locationUrl ? ` (${locationUrl})` : ' (exact venue to be announced)'}`,
-    );
+    lines.push(`Venue: ${venue}${locationUrl ? ` (${locationUrl})` : ''}`);
   }
+  if (videoUrl) lines.push(`Venue tour: ${videoUrl}`);
   const contacts = contactListText();
   if (contacts) lines.push(`Contact: ${contacts}`);
   if (whatsappUrl) lines.push('', `Join the WhatsApp group: ${whatsappUrl}`);
@@ -135,7 +134,7 @@ function contactListHtml() {
 
 // Event details card shown in every email, under the message body.
 function eventDetailsBlock() {
-  const { venue, time, locationUrl } = config.event;
+  const { venue, time, locationUrl, videoUrl } = config.event;
   const row = (label, value) =>
     `<tr>
        <td style="padding:6px 0;font-size:13px;color:#64748b;width:90px;vertical-align:top;">${label}</td>
@@ -145,6 +144,10 @@ function eventDetailsBlock() {
   const mapLink =
     locationUrl && /^https?:\/\//.test(locationUrl)
       ? ` &nbsp;<a href="${locationUrl}" style="color:#2563eb;font-weight:600;">View on map</a>`
+      : '';
+  const videoLink =
+    videoUrl && /^https?:\/\//.test(videoUrl)
+      ? row('🎬 Venue tour', `<a href="${videoUrl}" style="color:#dc2626;font-weight:600;">Watch venue tour</a>`)
       : '';
   const contacts = contactListHtml();
 
@@ -158,8 +161,8 @@ function eventDetailsBlock() {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           ${row('📅 Date', escapeHtml(prettyEventDate()))}
           ${time ? row('🕔 Time', escapeHtml(time)) : ''}
-          ${venue ? row('📍 Venue', escapeHtml(venue) + mapLink)
-            + `<tr><td></td><td style="font-size:12px;color:#94a3b8;padding-bottom:6px;">Exact venue to be announced</td></tr>` : ''}
+          ${venue ? row('📍 Venue', escapeHtml(venue) + mapLink) : ''}
+          ${videoLink}
           ${contacts ? row('📞 Contact', contacts) : ''}
         </table>
       </td></tr>
