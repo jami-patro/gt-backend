@@ -546,7 +546,7 @@ export async function sendPaymentSubmittedAlert(user) {
     ['Name', user.name],
     ['Email', user.email],
     ['Branch', user.branch || '—'],
-    ['Amount', user.contributionAmount > 0 ? `₹${Number(user.contributionAmount).toLocaleString('en-IN')}` : '—'],
+    ['Amount', (Number(user.contributionAmount) || config.payment.amount) > 0 ? `₹${(Number(user.contributionAmount) || config.payment.amount).toLocaleString('en-IN')}` : '—'],
     ['Reference note', user.paymentNote || '—'],
     ['Transaction / UTR', user.paymentTransactionId || '—'],
     ['Paid to', user.paymentMethodUsed || '—'],

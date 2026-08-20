@@ -62,10 +62,10 @@ export async function sendTelegram(text) {
 export async function sendPaymentSubmittedTelegram(user) {
   if (!isTelegramEnabled()) return { ok: false, skipped: true };
 
-  const amount =
-    user.contributionAmount > 0
-      ? `₹${Number(user.contributionAmount).toLocaleString('en-IN')}`
-      : '—';
+  // Members don't type an amount on submission (it's set when an admin
+  // confirms), so fall back to the fixed suggested contribution.
+  const amt = Number(user.contributionAmount) || config.payment.amount || 0;
+  const amount = amt > 0 ? `₹${amt.toLocaleString('en-IN')}` : '—';
   const lines = [
     '💰 <b>New payment proof to review</b>',
     '',
