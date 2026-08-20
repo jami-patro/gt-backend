@@ -534,6 +534,67 @@ export async function sendPaymentUnderReview(user) {
   });
 }
 
+// Admin alert — sent to the organizers when a member submits payment proof,
+// so they know there's something new to review in the dashboard.
+export async function sendPaymentSubmittedAlert(user) {
+  const to = config.payment.alertEmails;
+  if (!to || to.length === 0) return { ok: false, skipped: true };
+
+  const siteUrl = config.frontendUrls[0] || '';
+  const adminUrl = siteUrl ? `${siteUrl.replace(/\/$/, '')}/admin` : '';
+  const rows = [
+    ['Name', user.name],
+    ['Email', user.email],
+    ['Branch', user.branch || '—'],
+    ['Amount', user.contributionAmount > 0 ? `₹${Number(user.contributionAmount).toLocaleString('en-IN')}` : '—'],
+    ['Reference note', user.paymentNote || '—'],
+    ['Transaction / UTR', user.paymentTransactionId || '—'],
+    ['Paid to', user.paymentMethodUsed || '—'],
+  ];
+  const summary = rows
+    .map(
+      ([label, value]) =>
+        `<tr>
+           <td style="padding:6px 0;font-size:13px;color:#64748b;width:150px;vertical-align:top;">${escapeHtml(label)}</td>
+           <td style="padding:6px 0;font-size:14px;color:#0f172a;font-weight:600;">${escapeHtml(String(value))}</td>
+         </tr>`,
+    )
+    .join('');
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px;line-height:1.6;">
+      <strong>${escapeHtml(user.name)}</strong> just submitted payment proof. It's now
+      <strong>under review</strong> in the admin dashboard.
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+      style="margin:0 0 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+      <tr><td style="padding:14px 18px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${summary}</table>
+      </td></tr>
+    </table>`;
+
+  const html = renderEmail({
+    heading: '💰 New payment proof to review',
+    bodyHtml,
+    ctaLabel: adminUrl ? 'Open admin dashboard' : undefined,
+    ctaUrl: adminUrl || undefined,
+    showEventDetails: false,
+  });
+
+  const text =
+    `${user.name} submitted payment proof — now under review.\n\n` +
+    rows.map(([l, v]) => `${l}: ${v}`).join('\n') +
+    (adminUrl ? `\n\nReview: ${adminUrl}` : '');
+
+  // Send to all organizers at once (bcc keeps addresses private).
+  return sendEmail({
+    bcc: to,
+    subject: `New payment proof — ${user.name}`,
+    html,
+    text,
+  });
+}
+
 // Bulk RSVP confirmations — used to backfill/resend to everyone who has
 // already responded. `items` is an array of { user, response }.
 export async function sendRsvpConfirmationsBulk(items, concurrency = 5) {

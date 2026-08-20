@@ -2,7 +2,12 @@ import { Router } from 'express';
 import { Response } from '../models/Response.js';
 import { User } from '../models/User.js';
 import { requireAuth } from '../middleware/auth.js';
-import { sendRsvpConfirmation, sendPaymentUnderReview } from '../services/email.js';
+import {
+  sendRsvpConfirmation,
+  sendPaymentUnderReview,
+  sendPaymentSubmittedAlert,
+} from '../services/email.js';
+import { sendPaymentSubmittedTelegram } from '../services/telegram.js';
 import { Setting } from '../models/Setting.js';
 import { config } from '../config.js';
 
@@ -178,6 +183,24 @@ router.put('/payment-proof', requireAuth, async (req, res, next) => {
         if (!mail.ok && !mail.skipped) console.warn('Under-review email failed:', mail.error);
       } catch (e) {
         console.warn('Under-review email error:', e.message);
+      }
+    }
+
+    // Alert the organizers so they know there's a new proof to review.
+    if (!wasPaid) {
+      try {
+        const alert = await sendPaymentSubmittedAlert(user);
+        if (!alert.ok && !alert.skipped) console.warn('Admin alert email failed:', alert.error);
+      } catch (e) {
+        console.warn('Admin alert email error:', e.message);
+      }
+
+      // Instant Telegram push to organizers' phones (no-op if unconfigured).
+      try {
+        const tg = await sendPaymentSubmittedTelegram(user);
+        if (!tg.ok && !tg.skipped) console.warn('Admin alert Telegram failed:', tg.errors?.join('; '));
+      } catch (e) {
+        console.warn('Admin alert Telegram error:', e.message);
       }
     }
 

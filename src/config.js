@@ -110,6 +110,16 @@ export const config = {
     // The day's running order (programme). Edit via EVENT_SCHEDULE (JSON).
     schedule: parseSchedule(),
   },
+  // Optional Telegram alerts (instant push to organizers' phones). Both must
+  // be set for alerts to fire; otherwise it's a silent no-op.
+  telegram: {
+    botToken: (process.env.TELEGRAM_BOT_TOKEN || '').trim(),
+    // One or more chat ids, comma-separated (a person or a group chat id).
+    chatIds: (process.env.TELEGRAM_CHAT_ID || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  },
   admin: {
     name: process.env.ADMIN_NAME || 'Reunion Admin',
     email: process.env.ADMIN_EMAIL || 'admin@reunion.com',
@@ -129,6 +139,13 @@ export const config = {
       'Contributions open soon — the payment options will be enabled here shortly.',
     // Short note shown above the payment options.
     note: process.env.PAYMENT_NOTE || '',
+    // Who gets notified when a member submits payment proof. Comma-separated
+    // emails in PAYMENT_ALERT_EMAILS; falls back to the Gmail sender inbox so
+    // the organizer running email always gets the alert.
+    alertEmails: (process.env.PAYMENT_ALERT_EMAILS || process.env.GMAIL_USER || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
     // One or more payment methods. Provide as JSON in PAYMENT_METHODS, e.g.
     // '[{"label":"GPay - Mrunal","upiId":"mrunal@oksbi","payeeName":"Mrunal Jena","qr":"https://.../gpay.png"}]'
     // Falls back to single method from PAYMENT_UPI_ID / PAYMENT_PAYEE_NAME / PAYMENT_QR_URL.
