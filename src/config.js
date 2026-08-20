@@ -63,9 +63,16 @@ function parseSchedule() {
     }
   }
   return [
-    { time: '12:30 PM', title: 'Meet & Greet with Lunch', description: 'Reconnect over a warm welcome lunch.' },
-    { time: '4:30 PM', title: 'Evening Snacks', description: 'Tea, snacks and plenty of catching up.' },
-    { time: '7:00 PM', title: 'DJ Night & Dinner', description: 'Music, dance and dinner to close the day.' },
+    { time: '1:00 – 2:00 PM', title: '🍽️ Welcome Drinks, Lunch, Registration & T-Shirt Distribution', description: '' },
+    { time: '2:00 – 2:45 PM', title: '🎤 Welcome & Ice Breaker', description: '' },
+    { time: '2:45 – 3:30 PM', title: '📸 Guess Who? — Old Photo Slider', description: '' },
+    { time: '3:30 – 4:15 PM', title: '😂 Fun Games', description: '' },
+    { time: '4:15 – 5:00 PM', title: '❤️ Old Memories Session', description: '' },
+    { time: '5:00 – 5:30 PM', title: '☕ Tea & Snacks', description: '' },
+    { time: '5:30 – 6:15 PM', title: '🎭 Cultural & Fun Performances', description: '' },
+    { time: '7:00 – 7:45 PM', title: '🏅 Awards, Souvenirs & Reunion Moments', description: '' },
+    { time: '7:45 – 8:30 PM', title: '🎤 Open Mic & Friendship Time', description: '' },
+    { time: '8:30 PM onwards', title: '💃 Music, Dance & Grand Closing', description: '' },
   ];
 }
 
@@ -85,6 +92,8 @@ export const config = {
     venue: process.env.EVENT_VENUE || 'Bhubaneswar',
     // Optional Google Maps (or any) link to the venue.
     locationUrl: process.env.EVENT_LOCATION_URL || '',
+    // Optional venue tour video (e.g. a YouTube link).
+    videoUrl: process.env.EVENT_VIDEO_URL || '',
     time: process.env.EVENT_TIME || '5:00 PM – 10:00 PM (TBD)',
     // One or more contacts, comma-separated. Each may be "Name" or
     // "Name - phone" (e.g. "Mrunal Jena - 9876543210, Srikanta Patro - 9123456789").

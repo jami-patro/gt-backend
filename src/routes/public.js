@@ -13,6 +13,7 @@ router.get('/event', (_req, res) => {
     date: config.event.date,
     venue: config.event.venue,
     locationUrl: config.event.locationUrl,
+    videoUrl: config.event.videoUrl,
     time: config.event.time,
     contacts: config.event.contacts,
     schedule: config.event.schedule,
