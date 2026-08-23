@@ -26,6 +26,14 @@ const responseSchema = new mongoose.Schema(
       default: null,
     },
     message: { type: String, maxlength: 500, default: null },
+    // Accommodation help for out-of-town batchmates travelling to Bhubaneswar.
+    // Defaults to "not needed". Type only matters when accommodationNeeded=true.
+    accommodationNeeded: { type: Boolean, default: false },
+    accommodationType: {
+      type: String,
+      enum: ['single', 'family', null],
+      default: null,
+    },
   },
   { timestamps: true },
 );

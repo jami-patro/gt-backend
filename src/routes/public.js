@@ -115,9 +115,14 @@ router.get('/contributors', async (_req, res, next) => {
       approved: true,
       paymentStatus: 'paid',
     })
-      .select('name branch')
-      .sort({ name: 1 })
+      .select('name branch paymentProofUploadedAt updatedAt')
       .lean();
+
+    // Newest contributors first — by when they submitted their payment proof
+    // (fall back to last-updated for anyone marked paid without an upload time).
+    const when = (u) =>
+      new Date(u.paymentProofUploadedAt || u.updatedAt || 0).getTime();
+    rows.sort((a, b) => when(b) - when(a));
 
     return res.json({
       count: rows.length,
@@ -150,6 +155,8 @@ router.get('/attendees', async (_req, res, next) => {
           // the actual status (pending/rejected/not_paid) publicly — non-payers
           // simply have `paid: false`, so no one is outed as "unpaid".
           paid: r.user.paymentStatus === 'paid',
+          // Whether they've asked for accommodation help (travelling in).
+          needsStay: Boolean(r.accommodationNeeded),
         })),
     });
   } catch (err) {

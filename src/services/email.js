@@ -427,6 +427,13 @@ export async function sendRsvpConfirmation(user, response) {
     ['Food preference', foodLabel],
   ];
   if (response.tshirtSize) rows.push(['T-shirt size', response.tshirtSize]);
+  // Accommodation help (only meaningful for attending/maybe).
+  const accommodationLabel = response.accommodationNeeded
+    ? response.accommodationType === 'family'
+      ? 'Yes — Family room'
+      : 'Yes — Single person'
+    : 'Not needed';
+  rows.push(['Accommodation', accommodationLabel]);
 
   const summary = rows
     .map(

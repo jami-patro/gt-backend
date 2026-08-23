@@ -59,6 +59,8 @@ async function buildRecords() {
       guests: r?.guests ?? null,
       tshirtSize: r?.tshirtSize || null,
       message: r?.message || null,
+      accommodationNeeded: Boolean(r?.accommodationNeeded),
+      accommodationType: r?.accommodationType || null,
       respondedAt: r?.updatedAt || null,
     };
   });
@@ -147,6 +149,7 @@ router.get('/export.csv', async (_req, res, next) => {
       'Attendance', 'Food', 'Guests', 'T-Shirt',
       'Payment Status', 'Contribution (INR)', 'Payment Reference Note',
       'Transaction / UTR', 'Payment Method', 'Payment Uploaded At', 'Reject Reason',
+      'Accommodation', 'Room Type',
       'Message', 'Responded At', 'Registered At',
     ];
 
@@ -170,6 +173,8 @@ router.get('/export.csv', async (_req, res, next) => {
         r.attendance, r.foodPreference, r.guests, r.tshirtSize,
         PAY_LABEL[r.paymentStatus] || 'Not paid', r.contributionAmount, r.paymentNote,
         r.paymentTransactionId, r.paymentMethodUsed, r.paymentProofUploadedAt, r.paymentRejectReason,
+        r.accommodationNeeded ? 'Yes' : 'No',
+        r.accommodationType === 'family' ? 'Family room' : r.accommodationType === 'single' ? 'Single person' : '',
         r.message, r.respondedAt, r.createdAt,
       ].map(esc).join(','));
     }
