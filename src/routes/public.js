@@ -84,6 +84,12 @@ router.get('/stats', async (_req, res, next) => {
 
     const registered = await User.countDocuments({ role: 'user', approved: true });
     const pending = await User.countDocuments({ role: 'user', approved: false });
+    // Live event-day check-in count (from QR scans). 0 until the event starts.
+    const checkedIn = await User.countDocuments({
+      role: 'user',
+      approved: true,
+      'eventPass.checkedIn': true,
+    });
 
     const attending = agg?.attending || 0;
     const extraGuests = agg?.extraGuests || 0;
@@ -98,6 +104,7 @@ router.get('/stats', async (_req, res, next) => {
       food: { veg: agg?.veg || 0, nonVeg: agg?.nonVeg || 0 },
       extraGuests,
       headcount: attending + extraGuests,
+      checkedIn,
     });
   } catch (err) {
     return next(err);

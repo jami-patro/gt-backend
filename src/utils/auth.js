@@ -23,6 +23,12 @@ export function verifyPassword(plain, hash) {
   return bcrypt.compareSync(plain, hash);
 }
 
+// Random URL-safe token embedded in a member's event-pass QR code. Long
+// enough to be unguessable; hex keeps it URL-safe with no encoding needed.
+export function generatePassToken() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
 export function signToken(user) {
   return jwt.sign(
     { id: user.id, role: user.role, name: user.name },

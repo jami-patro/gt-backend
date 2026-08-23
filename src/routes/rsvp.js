@@ -8,6 +8,7 @@ import {
   sendPaymentSubmittedAlert,
 } from '../services/email.js';
 import { sendPaymentSubmittedTelegram } from '../services/telegram.js';
+import { generatePassToken } from '../utils/auth.js';
 import { Setting } from '../models/Setting.js';
 import { config } from '../config.js';
 
@@ -210,6 +211,46 @@ router.put('/payment-proof', requireAuth, async (req, res, next) => {
       transactionId: user.paymentTransactionId,
       uploadedAt: user.paymentProofUploadedAt,
       hasProof: Boolean(user.paymentProof),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// Shape the event-pass redemption status for API responses.
+function shapePass(u) {
+  const p = u.eventPass || {};
+  return {
+    checkedIn: Boolean(p.checkedIn),
+    checkedInAt: p.checkedInAt || null,
+    tshirt: Boolean(p.tshirt),
+    tshirtAt: p.tshirtAt || null,
+    souvenir: Boolean(p.souvenir),
+    souvenirAt: p.souvenirAt || null,
+    drinks: Number(p.drinks) || 0,
+    drinksAt: p.drinksAt || null,
+  };
+}
+
+// GET /api/rsvp/pass — the current user's event pass. Only issued once they're
+// paid; returns { paid:false } otherwise so the dashboard can show a hint.
+router.get('/pass', requireAuth, async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.paymentStatus !== 'paid') {
+      return res.json({ paid: false });
+    }
+    // Lazily mint a token the first time a paid member opens their pass.
+    if (!user.passToken) {
+      user.passToken = generatePassToken();
+      await user.save();
+    }
+    return res.json({
+      paid: true,
+      token: user.passToken,
+      name: user.name,
+      status: shapePass(user),
     });
   } catch (err) {
     return next(err);

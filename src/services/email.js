@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import QRCode from 'qrcode';
 import { config } from '../config.js';
 
 // Email sending with two interchangeable backends:
@@ -248,16 +249,18 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDeta
 </html>`;
 }
 
-// Low-level send. `to` and/or `bcc` may be a string or array. Returns
-// { ok, id?, error? } and never throws, so callers can fire-and-forget.
-export async function sendEmail({ to, bcc, subject, html, text, replyTo }) {
+// Low-level send. `to` and/or `bcc` may be a string or array. `attachments`
+// (optional) are nodemailer-style: [{ filename, content(Buffer), cid? }] — cid
+// lets you reference an inline image from the HTML as <img src="cid:...">.
+// Returns { ok, id?, error? } and never throws, so callers can fire-and-forget.
+export async function sendEmail({ to, bcc, subject, html, text, replyTo, attachments }) {
   if (!isEmailEnabled()) {
     return { ok: false, skipped: true, error: 'Email not configured' };
   }
   const reply = replyTo || config.email.replyTo || undefined;
 
   if (gmailConfigured()) {
-    return sendViaGmail({ to, bcc, subject, html, text, replyTo: reply });
+    return sendViaGmail({ to, bcc, subject, html, text, replyTo: reply, attachments });
   }
   return sendViaResend({ to, bcc, subject, html, text, replyTo: reply });
 }
@@ -265,7 +268,7 @@ export async function sendEmail({ to, bcc, subject, html, text, replyTo }) {
 // Transient network errors where a fresh SMTP connection is worth a retry.
 const TRANSIENT_SMTP = ['ECONNRESET', 'ETIMEDOUT', 'ESOCKET', 'ECONNECTION', 'EPIPE'];
 
-async function sendViaGmail({ to, bcc, subject, html, text, replyTo }, attempt = 1) {
+async function sendViaGmail({ to, bcc, subject, html, text, replyTo, attachments }, attempt = 1) {
   const message = {
     from: resolveFrom(),
     to: to || undefined,
@@ -274,6 +277,7 @@ async function sendViaGmail({ to, bcc, subject, html, text, replyTo }, attempt =
     subject,
     html,
     text,
+    attachments: attachments || undefined,
   };
   try {
     const info = await getTransport().sendMail(message);
@@ -289,7 +293,7 @@ async function sendViaGmail({ to, bcc, subject, html, text, replyTo }, attempt =
       }
       _transport = null;
       await new Promise((r) => setTimeout(r, 400 * attempt));
-      return sendViaGmail({ to, bcc, subject, html, text, replyTo }, attempt + 1);
+      return sendViaGmail({ to, bcc, subject, html, text, replyTo, attachments }, attempt + 1);
     }
     return { ok: false, error: err.message };
   }
@@ -592,6 +596,70 @@ export async function sendPaymentSubmittedAlert(user) {
     subject: `New payment proof — ${user.name}`,
     html,
     text,
+  });
+}
+
+// Event pass — emails the member their personal QR so they don't have to log
+// in at the gate. The QR is generated server-side as a PNG and embedded inline
+// via a CID attachment (email clients can't run the JS QR component).
+export async function sendPassEmail(user, passUrl) {
+  const first = firstNameOf(user.name);
+
+  let qrBuffer;
+  try {
+    qrBuffer = await QRCode.toBuffer(passUrl, { width: 320, margin: 2, errorCorrectionLevel: 'M' });
+  } catch (e) {
+    return { ok: false, error: `QR generation failed: ${e.message}` };
+  }
+
+  const amt = Number(user.contributionAmount) || 0;
+  const confirmLine =
+    amt > 0
+      ? `We've received <strong>₹${amt.toLocaleString('en-IN')}</strong> — your contribution is confirmed. 🎉`
+      : `Your contribution is confirmed. 🎉`;
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px;line-height:1.6;">Hi ${escapeHtml(first)},</p>
+    <p style="margin:0 0 16px;line-height:1.6;">${confirmLine}</p>
+    <p style="margin:0 0 16px;line-height:1.6;">
+      Here's your personal <strong>reunion pass</strong>. Show this QR at the venue — our team will
+      scan it for check-in, T-shirt, souvenir and drinks. No need to print; just keep it on your phone.
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+      style="margin:8px 0 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;">
+      <tr><td align="center" style="padding:22px;">
+        <img src="cid:passqr" width="220" height="220" alt="Your reunion pass QR"
+          style="display:block;border-radius:12px;background:#ffffff;padding:10px;border:1px solid #e2e8f0;" />
+        <div style="margin-top:12px;font-size:16px;font-weight:800;color:#0f172a;">${escapeHtml(user.name)}</div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#94a3b8;">
+          Reunion Pass
+        </div>
+      </td></tr>
+    </table>
+    <p style="margin:0 0 8px;line-height:1.6;font-size:13px;color:#64748b;">
+      Can't see the code? You can also open your pass any time from your dashboard.
+    </p>`;
+
+  const html = renderEmail({
+    heading: 'Your reunion pass 🎟️',
+    bodyHtml,
+    ctaLabel: passUrl ? 'Open my pass' : undefined,
+    ctaUrl: passUrl || undefined,
+    showEventDetails: true,
+  });
+
+  const text =
+    `Hi ${first},\n\n` +
+    `Here's your personal reunion pass. Show it at the venue for check-in, T-shirt, souvenir and drinks.\n\n` +
+    `Open your pass: ${passUrl}\n` +
+    emailFooterText();
+
+  return sendEmail({
+    to: user.email,
+    subject: `Your reunion pass — ${config.event.name}`,
+    html,
+    text,
+    attachments: [{ filename: 'reunion-pass.png', content: qrBuffer, cid: 'passqr' }],
   });
 }
 

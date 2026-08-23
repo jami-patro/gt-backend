@@ -4,13 +4,16 @@ import { Response } from '../models/Response.js';
 import { Setting } from '../models/Setting.js';
 import { config } from '../config.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { STATIONS, getStationTokens, rotateStationTokens } from '../utils/stations.js';
 import {
   isEmailEnabled,
   emailProvider,
   sendBroadcast,
   sendRsvpConfirmationsBulk,
   sendPaymentReceipt,
+  sendPassEmail,
 } from '../services/email.js';
+import { generatePassToken } from '../utils/auth.js';
 
 const router = Router();
 
@@ -51,6 +54,13 @@ async function buildRecords() {
       paymentMethodUsed: u.paymentMethodUsed || null,
       paymentRejectReason: u.paymentRejectReason || null,
       paymentProofUploadedAt: u.paymentProofUploadedAt || null,
+      // Event-day redemption tracking (from QR scans at the counters).
+      eventPass: {
+        checkedIn: Boolean(u.eventPass?.checkedIn),
+        tshirt: Boolean(u.eventPass?.tshirt),
+        souvenir: Boolean(u.eventPass?.souvenir),
+        drinks: Number(u.eventPass?.drinks) || 0,
+      },
       hasProof: imageIds.has(String(u._id)),
       hasProofOrTxn: imageIds.has(String(u._id)) || Boolean(u.paymentTransactionId),
       createdAt: u.createdAt,
@@ -147,6 +157,7 @@ router.get('/export.csv', async (_req, res, next) => {
       'Attendance', 'Food', 'Guests', 'T-Shirt',
       'Payment Status', 'Contribution (INR)', 'Payment Reference Note',
       'Transaction / UTR', 'Payment Method', 'Payment Uploaded At', 'Reject Reason',
+      'Checked In', 'T-Shirt Collected', 'Souvenir Collected', 'Drinks Used',
       'Message', 'Responded At', 'Registered At',
     ];
 
@@ -170,6 +181,10 @@ router.get('/export.csv', async (_req, res, next) => {
         r.attendance, r.foodPreference, r.guests, r.tshirtSize,
         PAY_LABEL[r.paymentStatus] || 'Not paid', r.contributionAmount, r.paymentNote,
         r.paymentTransactionId, r.paymentMethodUsed, r.paymentProofUploadedAt, r.paymentRejectReason,
+        r.eventPass?.checkedIn ? 'Yes' : 'No',
+        r.eventPass?.tshirt ? 'Yes' : 'No',
+        r.eventPass?.souvenir ? 'Yes' : 'No',
+        r.eventPass?.drinks ?? 0,
         r.message, r.respondedAt, r.createdAt,
       ].map(esc).join(','));
     }
@@ -255,13 +270,23 @@ router.patch('/users/:id/payment', async (req, res, next) => {
     Object.assign(target, update);
     await target.save();
 
-    // Fire a receipt email when transitioning INTO paid (serverless-safe).
+    // When transitioning INTO paid, email the member their reunion pass (QR).
+    // This doubles as the payment-confirmation receipt. Mint a pass token if
+    // they don't have one yet. Serverless-safe (awaited, never blocks save).
     if (update.paymentStatus === 'paid' && !wasPaid && target.email) {
       try {
-        const mail = await sendPaymentReceipt(target);
-        if (!mail.ok && !mail.skipped) console.warn('Receipt email failed:', mail.error);
+        if (!target.passToken) {
+          target.passToken = generatePassToken();
+          await target.save();
+        }
+        const siteUrl = config.frontendUrls[0] || '';
+        const passUrl = siteUrl ? `${siteUrl.replace(/\/$/, '')}/pass/${target.passToken}` : '';
+        const mail = passUrl
+          ? await sendPassEmail(target, passUrl)
+          : await sendPaymentReceipt(target); // fallback if no site URL configured
+        if (!mail.ok && !mail.skipped) console.warn('Pass/receipt email failed:', mail.error);
       } catch (e) {
-        console.warn('Receipt email error:', e.message);
+        console.warn('Pass/receipt email error:', e.message);
       }
     }
 
@@ -323,6 +348,113 @@ router.delete('/users/:id/proof', async (req, res, next) => {
       paymentStatus: target.paymentStatus,
       contributionAmount: target.contributionAmount,
     });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// ---- Volunteer counters (station QR links) ---------------------------
+
+// GET /api/admin/stations — the 4 counter links to hand out to volunteers.
+router.get('/stations', async (_req, res, next) => {
+  try {
+    const tokens = await getStationTokens();
+    return res.json({
+      stations: STATIONS.map((s) => ({ ...s, token: tokens[s.key] })),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/admin/stations/rotate — regenerate all counter links (old links
+// stop working). Use if a link leaks.
+router.post('/stations/rotate', async (_req, res, next) => {
+  try {
+    const tokens = await rotateStationTokens();
+    return res.json({
+      stations: STATIONS.map((s) => ({ ...s, token: tokens[s.key] })),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// ---- Event-day pass / redemption -------------------------------------
+
+function shapePass(u) {
+  const p = u.eventPass || {};
+  return {
+    checkedIn: Boolean(p.checkedIn),
+    checkedInAt: p.checkedInAt || null,
+    tshirt: Boolean(p.tshirt),
+    tshirtAt: p.tshirtAt || null,
+    souvenir: Boolean(p.souvenir),
+    souvenirAt: p.souvenirAt || null,
+    drinks: Number(p.drinks) || 0,
+    drinksAt: p.drinksAt || null,
+  };
+}
+
+// GET /api/admin/pass/:token — resolve a scanned QR token to the member and
+// their current redemption status. Used by the volunteer check-in screen.
+router.get('/pass/:token', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'Missing token' });
+    const u = await User.findOne({ passToken: token })
+      .select('name branch rollNumber paymentStatus contributionAmount eventPass')
+      .lean();
+    if (!u) return res.status(404).json({ error: 'Invalid or unknown pass' });
+    return res.json({
+      id: u._id,
+      name: u.name,
+      branch: u.branch || null,
+      rollNumber: u.rollNumber || null,
+      paymentStatus: u.paymentStatus || 'not_paid',
+      contributionAmount: u.contributionAmount ?? 0,
+      status: shapePass(u),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PATCH /api/admin/pass/:token — mark redemptions for a scanned member.
+// Body: any of { checkedIn:bool, tshirt:bool, souvenir:bool, drinks:0..2 }.
+router.patch('/pass/:token', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    const user = await User.findOne({ passToken: token });
+    if (!user) return res.status(404).json({ error: 'Invalid or unknown pass' });
+
+    const { checkedIn, tshirt, souvenir, drinks } = req.body || {};
+    const now = new Date();
+    if (!user.eventPass) user.eventPass = {};
+
+    if (checkedIn !== undefined) {
+      user.eventPass.checkedIn = Boolean(checkedIn);
+      user.eventPass.checkedInAt = checkedIn ? now : null;
+    }
+    if (tshirt !== undefined) {
+      user.eventPass.tshirt = Boolean(tshirt);
+      user.eventPass.tshirtAt = tshirt ? now : null;
+    }
+    if (souvenir !== undefined) {
+      user.eventPass.souvenir = Boolean(souvenir);
+      user.eventPass.souvenirAt = souvenir ? now : null;
+    }
+    if (drinks !== undefined) {
+      const n = Number(drinks);
+      if (!Number.isInteger(n) || n < 0 || n > 2) {
+        return res.status(400).json({ error: 'drinks must be 0, 1 or 2' });
+      }
+      user.eventPass.drinks = n;
+      user.eventPass.drinksAt = n > 0 ? now : null;
+    }
+
+    await user.save();
+    return res.json({ ok: true, name: user.name, status: shapePass(user) });
   } catch (err) {
     return next(err);
   }
