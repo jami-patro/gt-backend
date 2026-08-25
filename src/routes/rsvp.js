@@ -18,6 +18,8 @@ const ATTENDANCE = ['yes', 'no', 'maybe'];
 const FOOD = ['veg', 'non_veg'];
 const TSHIRT = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
 
+const ACCOMMODATION_TYPES = ['single', 'family'];
+
 function shapeResponse(r) {
   if (!r) return null;
   return {
@@ -26,6 +28,8 @@ function shapeResponse(r) {
     guests: r.guests,
     tshirtSize: r.tshirtSize,
     message: r.message,
+    accommodationNeeded: Boolean(r.accommodationNeeded),
+    accommodationType: r.accommodationType || null,
     updatedAt: r.updatedAt,
   };
 }
@@ -49,6 +53,8 @@ router.put('/', requireAuth, async (req, res, next) => {
       guests = 0,
       tshirtSize = null,
       message = null,
+      accommodationNeeded = false,
+      accommodationType = null,
     } = req.body || {};
 
     if (!ATTENDANCE.includes(attendance)) {
@@ -64,6 +70,16 @@ router.put('/', requireAuth, async (req, res, next) => {
     if (tshirtSize && !TSHIRT.includes(tshirtSize)) {
       return res.status(400).json({ error: `tshirtSize must be one of ${TSHIRT.join(', ')}` });
     }
+    const needsRoom = Boolean(accommodationNeeded);
+    let roomType = null;
+    if (needsRoom) {
+      if (!ACCOMMODATION_TYPES.includes(accommodationType)) {
+        return res
+          .status(400)
+          .json({ error: `accommodationType must be one of ${ACCOMMODATION_TYPES.join(', ')}` });
+      }
+      roomType = accommodationType;
+    }
     const note = message ? String(message).slice(0, 500) : null;
 
     const r = await Response.findOneAndUpdate(
@@ -75,6 +91,8 @@ router.put('/', requireAuth, async (req, res, next) => {
         guests: guestCount,
         tshirtSize: tshirtSize || null,
         message: note,
+        accommodationNeeded: needsRoom,
+        accommodationType: roomType,
       },
       { new: true, upsert: true, setDefaultsOnInsert: true },
     );
