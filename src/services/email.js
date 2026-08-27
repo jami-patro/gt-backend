@@ -215,16 +215,16 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDeta
     showEventDetails && galUrl && /^https?:\/\//.test(galUrl)
       ? `<tr><td style="padding-top:12px;">
            <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-             style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:12px;">
+             style="background:#fffbea;border:1px solid #ffe566;border-radius:12px;">
              <tr><td style="padding:16px 18px;text-align:center;">
-               <div style="font-size:16px;color:#3730a3;font-weight:800;margin-bottom:4px;">
+               <div style="font-size:16px;color:#0a0a0b;font-weight:800;margin-bottom:4px;">
                  📸 Share your photos &amp; videos
                </div>
-               <div style="font-size:13px;color:#4338ca;margin-bottom:12px;">
+               <div style="font-size:13px;color:#57534e;margin-bottom:12px;">
                  Add your snaps and short clips to our shared album — upload straight from your phone.
                </div>
-               <a href="${galUrl}" style="display:inline-block;background:#4f46e5;color:#ffffff;
-                  text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;font-size:15px;">
+               <a href="${galUrl}" style="display:inline-block;background:#ffd60a;color:#111827;
+                  text-decoration:none;font-weight:800;padding:12px 22px;border-radius:10px;font-size:15px;">
                  ⬆️ Upload photos &amp; videos
                </a>
              </td></tr>
