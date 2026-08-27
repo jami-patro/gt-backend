@@ -12,12 +12,13 @@ const router = Router();
 router.get('/', async (_req, res, next) => {
   try {
     const base = { approved: true, category: 'public' };
-    const [count, photos, videos] = await Promise.all([
+    const [count, photos, videos, guessWho] = await Promise.all([
       GalleryItem.countDocuments(base),
       GalleryItem.countDocuments({ ...base, resourceType: 'image' }),
       GalleryItem.countDocuments({ ...base, resourceType: 'video' }),
+      GalleryItem.countDocuments({ approved: true, category: 'guesswho' }),
     ]);
-    return res.json({ count, photos, videos });
+    return res.json({ count, photos, videos, guessWho });
   } catch (err) {
     return next(err);
   }
