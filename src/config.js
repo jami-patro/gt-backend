@@ -80,13 +80,15 @@ function parseSchedule() {
 // Configured via env so account details aren't committed to the repo. Returns
 // null (block hidden) unless at least an account number is provided.
 function parseBankAccount() {
+  // Defaults ensure the bank-transfer option is ALWAYS shown (even if env vars
+  // aren't set on the host). Override any field via the PAYMENT_BANK_* env vars.
   const acc = {
-    bankName: (process.env.PAYMENT_BANK_NAME || '').trim(),
-    accountName: (process.env.PAYMENT_BANK_ACCOUNT_NAME || '').trim(),
-    accountNumber: (process.env.PAYMENT_BANK_ACCOUNT_NUMBER || '').trim(),
-    branch: (process.env.PAYMENT_BANK_BRANCH || '').trim(),
-    ifsc: (process.env.PAYMENT_BANK_IFSC || '').trim(),
-    swift: (process.env.PAYMENT_BANK_SWIFT || '').trim(),
+    bankName: (process.env.PAYMENT_BANK_NAME || 'ICICI Bank').trim(),
+    accountName: (process.env.PAYMENT_BANK_ACCOUNT_NAME || 'Shibasis Hota').trim(),
+    accountNumber: (process.env.PAYMENT_BANK_ACCOUNT_NUMBER || '000101503827').trim(),
+    branch: (process.env.PAYMENT_BANK_BRANCH || 'Cenotaph Road, Chennai').trim(),
+    ifsc: (process.env.PAYMENT_BANK_IFSC || 'ICIC0000001').trim(),
+    swift: (process.env.PAYMENT_BANK_SWIFT || 'ICICINBBNRI').trim(),
   };
   return acc.accountNumber ? acc : null;
 }
