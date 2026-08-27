@@ -13,7 +13,9 @@ import {
   sendPaymentReceipt,
   sendPassEmail,
 } from '../services/email.js';
-import { generatePassToken } from '../utils/auth.js';
+import { generatePassToken, hashPassword, generateTempPassword, isValidEmail } from '../utils/auth.js';
+import crypto from 'crypto';
+import QRCode from 'qrcode';
 
 const router = Router();
 
@@ -425,6 +427,32 @@ router.get('/pass/:token', async (req, res, next) => {
   }
 });
 
+// GET /api/admin/users/:id/pass.png — download a guest's pass QR as a PNG.
+// Handy when a member's phone/email pass isn't working: the organizer can save
+// it and let them photograph it. Mints a pass token if they don't have one.
+router.get('/users/:id/pass.png', async (req, res, next) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'admin') return res.status(400).json({ error: 'Not applicable to admin accounts' });
+
+    if (!user.passToken) {
+      user.passToken = generatePassToken();
+      await user.save();
+    }
+    const siteUrl = config.frontendUrls[0] || '';
+    const passUrl = siteUrl ? `${siteUrl.replace(/\/$/, '')}/pass/${user.passToken}` : user.passToken;
+
+    const png = await QRCode.toBuffer(passUrl, { width: 600, margin: 2, errorCorrectionLevel: 'M' });
+    const safeName = (user.name || 'guest').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'guest';
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}-pass.png"`);
+    return res.send(png);
+  } catch (err) {
+    return next(err);
+  }
+});
+
 // PATCH /api/admin/pass/:token — mark redemptions for a scanned member.
 // Body: any of { checkedIn:bool, tshirt:bool, souvenir:bool, drinks:0..2 }.
 router.patch('/pass/:token', async (req, res, next) => {
@@ -686,6 +714,84 @@ router.post('/resend-rsvp-confirmations', async (_req, res, next) => {
       sent: result.sent,
       total: result.total,
       errors: result.errors,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/admin/walkin — register a walk-in guest at the venue. Creates an
+// approved member + their RSVP in one shot, optionally marking them paid and
+// checked-in, and mints an event pass. Email is optional (a placeholder is
+// generated when missing, since the account still needs a unique email).
+// Body: { name, email?, phone?, branch?, rollNumber?, foodPreference?,
+//         tshirtSize?, guests?, contributionAmount?, markPaid?, checkIn? }
+router.post('/walkin', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const name = String(b.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+
+    // Resolve email: use the given one (validated + unique) or synthesize one.
+    let email;
+    if (b.email && String(b.email).trim()) {
+      if (!isValidEmail(b.email)) {
+        return res.status(400).json({ error: 'Please provide a valid email address' });
+      }
+      email = String(b.email).toLowerCase().trim();
+      const clash = await User.findOne({ email }).lean();
+      if (clash) return res.status(409).json({ error: 'An account with this email already exists' });
+    } else {
+      email = `walkin-${crypto.randomBytes(5).toString('hex')}@walkin.local`;
+    }
+
+    const foodPreference = ['veg', 'non_veg'].includes(b.foodPreference) ? b.foodPreference : 'veg';
+    const tshirtSize = ['XS', 'S', 'M', 'L', 'XL', 'XXL'].includes(b.tshirtSize) ? b.tshirtSize : null;
+    const guests = Math.max(0, Math.min(20, Number(b.guests) || 0));
+    const amount = Math.max(0, Math.round(Number(b.contributionAmount) || 0));
+    const markPaid = Boolean(b.markPaid) && amount > 0;
+    const checkIn = b.checkIn === undefined ? true : Boolean(b.checkIn);
+
+    const user = await User.create({
+      name,
+      email,
+      phone: b.phone ? String(b.phone).trim() : null,
+      branch: b.branch ? String(b.branch).trim() : null,
+      rollNumber: b.rollNumber ? String(b.rollNumber).trim() : null,
+      // Random password — walk-ins don't log in, but the schema needs a hash.
+      passwordHash: hashPassword(generateTempPassword(12)),
+      role: 'user',
+      approved: true,
+      passToken: generatePassToken(),
+      paymentStatus: markPaid ? 'paid' : 'not_paid',
+      contributionAmount: markPaid ? amount : 0,
+      eventPass: {
+        checkedIn: checkIn,
+        checkedInAt: checkIn ? new Date() : null,
+        tshirt: false,
+        souvenir: false,
+        drinks: 0,
+      },
+    });
+
+    await Response.findOneAndUpdate(
+      { user: user._id },
+      { user: user._id, attendance: 'yes', foodPreference, tshirtSize, guests },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    );
+
+    const siteUrl = config.frontendUrls[0] || '';
+    const passUrl = siteUrl ? `${siteUrl.replace(/\/$/, '')}/pass/${user.passToken}` : '';
+
+    return res.status(201).json({
+      ok: true,
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      passToken: user.passToken,
+      passUrl,
+      checkedIn: checkIn,
+      paymentStatus: user.paymentStatus,
     });
   } catch (err) {
     return next(err);
