@@ -17,6 +17,7 @@ router.get('/event', (_req, res) => {
     time: config.event.time,
     contacts: config.event.contacts,
     schedule: config.event.schedule,
+    galleryUrl: config.event.galleryUrl,
   });
 });
 

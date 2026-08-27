@@ -107,6 +107,9 @@ export const config = {
       }),
     // Optional WhatsApp group invite link (https://chat.whatsapp.com/...).
     whatsappUrl: process.env.WHATSAPP_URL || '',
+    // Optional shared Google Drive/Photos folder where guests upload their
+    // photos & videos. When set, a "Share your memories" section appears.
+    galleryUrl: process.env.GALLERY_URL || '',
     // The day's running order (programme). Edit via EVENT_SCHEDULE (JSON).
     schedule: parseSchedule(),
   },

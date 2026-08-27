@@ -96,13 +96,14 @@ function prettyEventDate() {
 // Plain-text event details + WhatsApp + disclaimer, appended to the text
 // version of templated emails. Mirrors the HTML footer content.
 function emailFooterText() {
-  const { venue, time, locationUrl, videoUrl, whatsappUrl } = config.event;
+  const { venue, time, locationUrl, videoUrl, whatsappUrl, galleryUrl } = config.event;
   const lines = ['', 'Event details', `Date: ${prettyEventDate()}`];
   if (time) lines.push(`Time: ${time}`);
   if (venue) {
     lines.push(`Venue: ${venue}${locationUrl ? ` (${locationUrl})` : ''}`);
   }
   if (videoUrl) lines.push(`Venue tour: ${videoUrl}`);
+  if (galleryUrl) lines.push(`Share your photos & videos: ${galleryUrl}`);
   const contacts = contactListText();
   if (contacts) lines.push(`Contact: ${contacts}`);
   if (whatsappUrl) lines.push('', `Join the WhatsApp group: ${whatsappUrl}`);
@@ -135,7 +136,7 @@ function contactListHtml() {
 
 // Event details card shown in every email, under the message body.
 function eventDetailsBlock() {
-  const { venue, time, locationUrl, videoUrl } = config.event;
+  const { venue, time, locationUrl, videoUrl, galleryUrl } = config.event;
   const row = (label, value) =>
     `<tr>
        <td style="padding:6px 0;font-size:13px;color:#64748b;width:90px;vertical-align:top;">${label}</td>
@@ -149,6 +150,10 @@ function eventDetailsBlock() {
   const videoLink =
     videoUrl && /^https?:\/\//.test(videoUrl)
       ? row('🎬 Venue tour', `<a href="${videoUrl}" style="color:#dc2626;font-weight:600;">Watch venue tour</a>`)
+      : '';
+  const galleryLink =
+    galleryUrl && /^https?:\/\//.test(galleryUrl)
+      ? row('📸 Photos', `<a href="${galleryUrl}" style="color:#4f46e5;font-weight:600;">Share your photos &amp; videos</a>`)
       : '';
   const contacts = contactListHtml();
 
@@ -164,6 +169,7 @@ function eventDetailsBlock() {
           ${time ? row('🕔 Time', escapeHtml(time)) : ''}
           ${venue ? row('📍 Venue', escapeHtml(venue) + mapLink) : ''}
           ${videoLink}
+          ${galleryLink}
           ${contacts ? row('📞 Contact', contacts) : ''}
         </table>
       </td></tr>
