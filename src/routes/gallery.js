@@ -11,8 +11,13 @@ const router = Router();
 // reveal. The actual images are viewable only by organizers (admin) via /all.
 router.get('/', async (_req, res, next) => {
   try {
-    const count = await GalleryItem.countDocuments({ approved: true, category: 'public' });
-    return res.json({ count });
+    const base = { approved: true, category: 'public' };
+    const [count, photos, videos] = await Promise.all([
+      GalleryItem.countDocuments(base),
+      GalleryItem.countDocuments({ ...base, resourceType: 'image' }),
+      GalleryItem.countDocuments({ ...base, resourceType: 'video' }),
+    ]);
+    return res.json({ count, photos, videos });
   } catch (err) {
     return next(err);
   }
