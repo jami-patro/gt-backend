@@ -6,15 +6,24 @@ import { optionalAuth, requireAuth, requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
-// GET /api/gallery — PUBLIC memories wall. Only returns category='public'.
-// "Guess Who?" photos are intentionally excluded so the game isn't spoiled.
-router.get('/', async (req, res, next) => {
+// GET /api/gallery — PUBLIC. Returns ONLY a count, never the media URLs. Photos
+// & videos are kept hidden until the event day so the gallery is a surprise
+// reveal. The actual images are viewable only by organizers (admin) via /all.
+router.get('/', async (_req, res, next) => {
   try {
-    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
-    const items = await GalleryItem.find({ approved: true, category: 'public' })
+    const count = await GalleryItem.countDocuments({ approved: true, category: 'public' });
+    return res.json({ count });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/gallery/all — admin-only full list (both public + guesswho), for the
+// event-day reveal slideshow.
+router.get('/all', requireAuth, requireAdmin, async (_req, res, next) => {
+  try {
+    const items = await GalleryItem.find({ approved: true })
       .sort({ createdAt: -1 })
-      .limit(limit)
-      .select('url thumbUrl resourceType uploaderName createdAt')
       .lean();
     return res.json({
       count: items.length,
@@ -23,7 +32,9 @@ router.get('/', async (req, res, next) => {
         url: i.url,
         thumbUrl: i.thumbUrl || i.url,
         type: i.resourceType,
+        category: i.category,
         uploaderName: i.uploaderName || null,
+        guessAnswer: i.guessAnswer || null,
         uploadedAt: i.createdAt,
       })),
     });
