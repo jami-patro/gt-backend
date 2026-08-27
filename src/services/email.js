@@ -103,7 +103,8 @@ function emailFooterText() {
     lines.push(`Venue: ${venue}${locationUrl ? ` (${locationUrl})` : ''}`);
   }
   if (videoUrl) lines.push(`Venue tour: ${videoUrl}`);
-  if (galleryUrl) lines.push(`Share your photos & videos: ${galleryUrl}`);
+  const uploadLink = (config.frontendUrls[0] || '').replace(/\/$/, '') || galleryUrl;
+  if (uploadLink) lines.push(`Share your photos & videos: ${uploadLink}`);
   const contacts = contactListText();
   if (contacts) lines.push(`Contact: ${contacts}`);
   if (whatsappUrl) lines.push('', `Join the WhatsApp group: ${whatsappUrl}`);
@@ -210,9 +211,11 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDeta
       : '';
 
   // Prominent "share your photos & videos" call-to-action (highlighted block).
-  const galUrl = config.event.galleryUrl;
+  // Prefer linking to our own website (where the in-site uploader lives); fall
+  // back to the external album link only if no site URL is configured.
+  const uploadLink = (config.frontendUrls[0] || '').replace(/\/$/, '') || config.event.galleryUrl;
   const gallery =
-    showEventDetails && galUrl && /^https?:\/\//.test(galUrl)
+    showEventDetails && uploadLink && /^https?:\/\//.test(uploadLink)
       ? `<tr><td style="padding-top:12px;">
            <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
              style="background:#fffbea;border:1px solid #ffe566;border-radius:12px;">
@@ -221,16 +224,13 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDeta
                  📸 Share your photos &amp; videos
                </div>
                <div style="font-size:13px;color:#57534e;margin-bottom:12px;">
-                 Add your snaps and short clips to our shared album — upload straight from your phone.
+                 Add your snaps and short clips right on our website — no app or Google account
+                 needed. Just pick them from your phone or laptop.
                </div>
-               <a href="${galUrl}" style="display:inline-block;background:#ffd60a;color:#111827;
+               <a href="${uploadLink}" style="display:inline-block;background:#ffd60a;color:#111827;
                   text-decoration:none;font-weight:800;padding:12px 22px;border-radius:10px;font-size:15px;">
                  ⬆️ Upload photos &amp; videos
                </a>
-               <div style="font-size:11px;color:#78716c;margin-top:10px;line-height:1.5;">
-                 📱 On a phone, open it in the Google Drive app, then tap <b>+ &rarr; Upload</b>
-                 (sign into a Google account first). 💻 On a laptop, use the <b>+ New</b> button.
-               </div>
              </td></tr>
            </table>
          </td></tr>`

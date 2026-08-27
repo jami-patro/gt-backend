@@ -11,6 +11,7 @@ import rsvpRoutes from './routes/rsvp.js';
 import publicRoutes from './routes/public.js';
 import adminRoutes from './routes/admin.js';
 import stationRoutes from './routes/station.js';
+import galleryRoutes from './routes/gallery.js';
 
 const app = express();
 
@@ -56,6 +57,7 @@ app.use('/api/rsvp', rsvpRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/station', stationRoutes);
+app.use('/api/gallery', galleryRoutes);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 // eslint-disable-next-line no-unused-vars

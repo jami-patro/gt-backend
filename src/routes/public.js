@@ -18,6 +18,13 @@ router.get('/event', (_req, res) => {
     contacts: config.event.contacts,
     schedule: config.event.schedule,
     galleryUrl: config.event.galleryUrl,
+    // In-site uploads: only the public bits (cloud name + unsigned preset).
+    // When both are set the browser can upload directly to Cloudinary.
+    cloudinary: {
+      cloudName: config.cloudinary.cloudName,
+      uploadPreset: config.cloudinary.uploadPreset,
+      enabled: Boolean(config.cloudinary.cloudName && config.cloudinary.uploadPreset),
+    },
   });
 });
 

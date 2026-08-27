@@ -109,9 +109,21 @@ export const config = {
     whatsappUrl: process.env.WHATSAPP_URL || '',
     // Optional shared Google Drive/Photos folder where guests upload their
     // photos & videos. When set, a "Share your memories" section appears.
+    // (Legacy/fallback — the in-site Cloudinary uploader below is preferred.)
     galleryUrl: process.env.GALLERY_URL || '',
     // The day's running order (programme). Edit via EVENT_SCHEDULE (JSON).
     schedule: parseSchedule(),
+  },
+  // Cloudinary — in-site photo/video uploads. Guests upload straight from the
+  // browser to Cloudinary using an UNSIGNED upload preset (no login, no app),
+  // and we store only the returned URL in MongoDB. cloudName + uploadPreset are
+  // public (safe to expose to the browser). apiKey/apiSecret are optional and
+  // only used server-side to delete assets from the admin panel.
+  cloudinary: {
+    cloudName: (process.env.CLOUDINARY_CLOUD_NAME || '').trim(),
+    uploadPreset: (process.env.CLOUDINARY_UPLOAD_PRESET || '').trim(),
+    apiKey: (process.env.CLOUDINARY_API_KEY || '').trim(),
+    apiSecret: (process.env.CLOUDINARY_API_SECRET || '').trim(),
   },
   // Optional Telegram alerts (instant push to organizers' phones). Both must
   // be set for alerts to fire; otherwise it's a silent no-op.

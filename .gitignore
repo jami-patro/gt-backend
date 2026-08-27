@@ -7,6 +7,7 @@ PAYMENT_QR_DESIGN.md
 QR_EVENT_PASS.md
 WALKIN_REGISTRATION.md
 QR_PRINT_CHECKLIST.md
+CLOUDINARY_UPLOADS.md
 
 # Local one-off test/debug scripts (kept on disk, not committed)
 check_proof.js
