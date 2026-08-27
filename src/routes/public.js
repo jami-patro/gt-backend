@@ -53,6 +53,7 @@ router.get('/payment', async (_req, res, next) => {
       amount,
       note,
       methods: publishedMethods, // [{ label, upiId, payeeName, qr }] — only published ones
+      bankAccount: config.payment.bankAccount, // { bankName, accountName, ... } or null
     });
   } catch (err) {
     return next(err);

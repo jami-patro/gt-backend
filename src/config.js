@@ -76,6 +76,21 @@ function parseSchedule() {
   ];
 }
 
+// Optional bank-transfer details (handy for NRI members / net-banking).
+// Configured via env so account details aren't committed to the repo. Returns
+// null (block hidden) unless at least an account number is provided.
+function parseBankAccount() {
+  const acc = {
+    bankName: (process.env.PAYMENT_BANK_NAME || '').trim(),
+    accountName: (process.env.PAYMENT_BANK_ACCOUNT_NAME || '').trim(),
+    accountNumber: (process.env.PAYMENT_BANK_ACCOUNT_NUMBER || '').trim(),
+    branch: (process.env.PAYMENT_BANK_BRANCH || '').trim(),
+    ifsc: (process.env.PAYMENT_BANK_IFSC || '').trim(),
+    swift: (process.env.PAYMENT_BANK_SWIFT || '').trim(),
+  };
+  return acc.accountNumber ? acc : null;
+}
+
 export const config = {
   port: Number(process.env.PORT) || 5050,
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -165,6 +180,8 @@ export const config = {
     // '[{"label":"GPay - Mrunal","upiId":"mrunal@oksbi","payeeName":"Mrunal Jena","qr":"https://.../gpay.png"}]'
     // Falls back to single method from PAYMENT_UPI_ID / PAYMENT_PAYEE_NAME / PAYMENT_QR_URL.
     methods: parsePaymentMethods(),
+    // Optional bank-transfer details for NRI / net-banking (null when unset).
+    bankAccount: parseBankAccount(),
   },
   email: {
     // Provider is auto-detected: Gmail (SMTP) is used when GMAIL_USER +
