@@ -41,18 +41,27 @@ router.get('/payment', async (_req, res, next) => {
     // individual QR codes without a redeploy. A method is published unless it
     // has been explicitly disabled.
     const methodState = (await Setting.get('paymentMethodState', {})) || {};
-    const publishedMethods = methods.filter((_m, i) => methodState[i] !== false);
+    let publishedMethods = methods.filter((_m, i) => methodState[i] !== false);
+    // Safety net: if the admin hasn't left ANY UPI method published, still show
+    // the configured one(s) so guests always have a UPI option (in addition to
+    // the always-present bank transfer). Admin can still choose WHICH to show
+    // when more than one is published.
+    if (publishedMethods.length === 0 && methods.length > 0) {
+      publishedMethods = methods;
+    }
+
+    const hasBank = Boolean(config.payment.bankAccount);
 
     return res.json({
-      // `enabled` = payment is configured AND open AND at least one method is live.
-      // `configured` = methods exist but may not be open yet (coming-soon state).
-      configured: methods.length > 0,
-      enabled: publishedMethods.length > 0 && ready,
+      // `enabled` = open AND there's at least one way to pay (UPI or bank).
+      // `configured` = a payment method exists (UPI or bank), maybe not open yet.
+      configured: methods.length > 0 || hasBank,
+      enabled: (publishedMethods.length > 0 || hasBank) && ready,
       ready,
       comingSoonNote,
       amount,
       note,
-      methods: publishedMethods, // [{ label, upiId, payeeName, qr }] — only published ones
+      methods: publishedMethods, // [{ label, upiId, payeeName, qr }]
       bankAccount: config.payment.bankAccount, // { bankName, accountName, ... } or null
     });
   } catch (err) {
