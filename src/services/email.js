@@ -227,6 +227,10 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDeta
                   text-decoration:none;font-weight:800;padding:12px 22px;border-radius:10px;font-size:15px;">
                  ⬆️ Upload photos &amp; videos
                </a>
+               <div style="font-size:11px;color:#78716c;margin-top:10px;line-height:1.5;">
+                 📱 On a phone, open it in the Google Drive app, then tap <b>+ &rarr; Upload</b>
+                 (sign into a Google account first). 💻 On a laptop, use the <b>+ New</b> button.
+               </div>
              </td></tr>
            </table>
          </td></tr>`
