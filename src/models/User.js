@@ -38,8 +38,12 @@ const userSchema = new mongoose.Schema(
     paymentRejectReason: { type: String, trim: true, default: null },
     // ---- Event-day pass / redemption tracking --------------------------
     // A stable random token embedded in the member's QR code. Generated
-    // lazily once they're marked paid. Sparse+unique so many nulls are OK.
-    passToken: { type: String, default: null, unique: true, sparse: true, index: true },
+    // lazily once they're marked paid. Sparse+unique so members without a
+    // pass are simply absent from the index. IMPORTANT: no `default: null` —
+    // a null default makes the field present-but-null, and `sparse` only skips
+    // ABSENT fields, so two null tokens would collide on the unique index and
+    // break registration with an E11000 duplicate-key error.
+    passToken: { type: String, unique: true, sparse: true, index: true },
     // What they've collected at the venue. Volunteers scan the QR and toggle
     // these. `drinks` is a running count capped at 2.
     eventPass: {
