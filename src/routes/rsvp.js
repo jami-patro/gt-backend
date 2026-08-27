@@ -156,7 +156,7 @@ router.put('/payment-proof', requireAuth, async (req, res, next) => {
         .filter(Boolean)
         .join(', ') || null;
 
-    const { image, note, transactionId } = req.body || {};
+    const { image, note, transactionId, paidVia } = req.body || {};
 
     // Proof of payment: EITHER a screenshot OR a transaction/UTR id is required.
     const hasImage = typeof image === 'string' && image.startsWith('data:image/');
@@ -186,8 +186,15 @@ router.put('/payment-proof', requireAuth, async (req, res, next) => {
     user.paymentTransactionId = txnId ? txnId.slice(0, 100) : null;
     user.paymentProofUploadedAt = new Date();
     user.paymentNote = String(note).slice(0, 300);
-    // Implicitly recorded from whichever QR/method was live at submission time.
-    user.paymentMethodUsed = activeMethodLabel ? activeMethodLabel.slice(0, 150) : null;
+    // Record the channel. If the member says they paid by bank transfer, mark
+    // it explicitly (so admin analytics can total NRI/bank separately);
+    // otherwise fall back to whichever UPI method was live at submission time.
+    user.paymentMethodUsed =
+      paidVia === 'bank'
+        ? 'Bank transfer (NRI)'
+        : activeMethodLabel
+          ? activeMethodLabel.slice(0, 150)
+          : null;
     user.paymentRejectReason = null;
     // Don't override an admin-confirmed payment.
     const wasPaid = user.paymentStatus === 'paid';
