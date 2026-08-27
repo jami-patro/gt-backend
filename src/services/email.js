@@ -136,7 +136,7 @@ function contactListHtml() {
 
 // Event details card shown in every email, under the message body.
 function eventDetailsBlock() {
-  const { venue, time, locationUrl, videoUrl, galleryUrl } = config.event;
+  const { venue, time, locationUrl, videoUrl } = config.event;
   const row = (label, value) =>
     `<tr>
        <td style="padding:6px 0;font-size:13px;color:#64748b;width:90px;vertical-align:top;">${label}</td>
@@ -151,10 +151,8 @@ function eventDetailsBlock() {
     videoUrl && /^https?:\/\//.test(videoUrl)
       ? row('🎬 Venue tour', `<a href="${videoUrl}" style="color:#dc2626;font-weight:600;">Watch venue tour</a>`)
       : '';
-  const galleryLink =
-    galleryUrl && /^https?:\/\//.test(galleryUrl)
-      ? row('📸 Photos', `<a href="${galleryUrl}" style="color:#4f46e5;font-weight:600;">Share your photos &amp; videos</a>`)
-      : '';
+  // Gallery gets its own prominent CTA block in renderEmail, so it's omitted
+  // from this compact details table to avoid duplication.
   const contacts = contactListHtml();
 
   return `
@@ -169,7 +167,6 @@ function eventDetailsBlock() {
           ${time ? row('🕔 Time', escapeHtml(time)) : ''}
           ${venue ? row('📍 Venue', escapeHtml(venue) + mapLink) : ''}
           ${videoLink}
-          ${galleryLink}
           ${contacts ? row('📞 Contact', contacts) : ''}
         </table>
       </td></tr>
@@ -212,6 +209,29 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDeta
          </td></tr>`
       : '';
 
+  // Prominent "share your photos & videos" call-to-action (highlighted block).
+  const galUrl = config.event.galleryUrl;
+  const gallery =
+    showEventDetails && galUrl && /^https?:\/\//.test(galUrl)
+      ? `<tr><td style="padding-top:12px;">
+           <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:12px;">
+             <tr><td style="padding:16px 18px;text-align:center;">
+               <div style="font-size:16px;color:#3730a3;font-weight:800;margin-bottom:4px;">
+                 📸 Share your photos &amp; videos
+               </div>
+               <div style="font-size:13px;color:#4338ca;margin-bottom:12px;">
+                 Add your snaps and short clips to our shared album — upload straight from your phone.
+               </div>
+               <a href="${galUrl}" style="display:inline-block;background:#4f46e5;color:#ffffff;
+                  text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;font-size:15px;">
+                 ⬆️ Upload photos &amp; videos
+               </a>
+             </td></tr>
+           </table>
+         </td></tr>`
+      : '';
+
   return `<!doctype html>
 <html>
 <body style="margin:0;background:#f1f5f9;padding:24px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;">
@@ -233,6 +253,7 @@ export function renderEmail({ heading, bodyHtml, ctaLabel, ctaUrl, showEventDeta
           <tr><td style="font-size:15px;color:#334155;">${bodyHtml}</td></tr>
           ${cta}
           ${details}
+          ${gallery}
           ${whatsapp}
         </table>
         <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 16px;"/>
