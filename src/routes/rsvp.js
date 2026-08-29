@@ -60,9 +60,23 @@ router.put('/', requireAuth, async (req, res, next) => {
     if (!ATTENDANCE.includes(attendance)) {
       return res.status(400).json({ error: `attendance must be one of ${ATTENDANCE.join(', ')}` });
     }
-    if (!FOOD.includes(foodPreference)) {
+    // Food preference and T-shirt size are required for anyone attending
+    // (yes/maybe) so we can plan catering and order the right tees. Guests who
+    // can't make it are exempt.
+    const attending = attendance !== 'no';
+    if (attending) {
+      if (!FOOD.includes(foodPreference)) {
+        return res.status(400).json({ error: 'Please choose your food preference.' });
+      }
+      if (!TSHIRT.includes(tshirtSize)) {
+        return res.status(400).json({ error: 'Please select your T-shirt size.' });
+      }
+    } else if (foodPreference && !FOOD.includes(foodPreference)) {
       return res.status(400).json({ error: `foodPreference must be one of ${FOOD.join(', ')}` });
     }
+    // Non-attendees may leave food blank; coerce to a valid enum value so the
+    // document saves cleanly (it's irrelevant for them).
+    const food = FOOD.includes(foodPreference) ? foodPreference : 'veg';
     const guestCount = Number.parseInt(guests, 10);
     if (Number.isNaN(guestCount) || guestCount < 0 || guestCount > 20) {
       return res.status(400).json({ error: 'guests must be a number between 0 and 20' });
@@ -87,7 +101,7 @@ router.put('/', requireAuth, async (req, res, next) => {
       {
         user: req.user.id,
         attendance,
-        foodPreference,
+        foodPreference: food,
         guests: guestCount,
         tshirtSize: tshirtSize || null,
         message: note,
