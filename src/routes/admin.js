@@ -70,6 +70,7 @@ async function buildRecords() {
       foodPreference: r?.foodPreference || null,
       guests: r?.guests ?? null,
       tshirtSize: r?.tshirtSize || null,
+      tshirtFit: r?.tshirtFit || 'mens',
       message: r?.message || null,
       accommodationNeeded: Boolean(r?.accommodationNeeded),
       accommodationType: r?.accommodationType || null,
@@ -158,7 +159,7 @@ router.get('/export.csv', async (_req, res, next) => {
 
     const headers = [
       'Name', 'Email', 'Phone', 'Branch', 'Roll Number', 'Approved',
-      'Attendance', 'Food', 'Guests', 'T-Shirt',
+      'Attendance', 'Food', 'Guests', 'T-Shirt', 'T-Shirt Fit',
       'Payment Status', 'Contribution (INR)', 'Payment Reference Note',
       'Transaction / UTR', 'Payment Method', 'Payment Uploaded At', 'Reject Reason',
       'Checked In', 'T-Shirt Collected', 'Souvenir Collected', 'Drinks Used',
@@ -184,6 +185,7 @@ router.get('/export.csv', async (_req, res, next) => {
       lines.push([
         r.name, r.email, r.phone, r.branch, r.rollNumber, r.approved ? 'Yes' : 'No',
         r.attendance, r.foodPreference, r.guests, r.tshirtSize,
+        r.tshirtFit === 'womens' ? "Women's" : "Men's",
         PAY_LABEL[r.paymentStatus] || 'Not paid', r.contributionAmount, r.paymentNote,
         r.paymentTransactionId, r.paymentMethodUsed, r.paymentProofUploadedAt, r.paymentRejectReason,
         r.eventPass?.checkedIn ? 'Yes' : 'No',
@@ -545,6 +547,9 @@ router.patch('/records/:id', async (req, res, next) => {
       respPatch.foodPreference = b.foodPreference;
     }
     if (b.tshirtSize !== undefined) respPatch.tshirtSize = b.tshirtSize || null;
+    if (b.tshirtFit !== undefined) {
+      respPatch.tshirtFit = b.tshirtFit === 'womens' ? 'womens' : 'mens';
+    }
     if (b.message !== undefined) respPatch.message = b.message ? String(b.message).slice(0, 500) : null;
     if (b.guests !== undefined) respPatch.guests = Math.max(0, Number(b.guests) || 0);
 
@@ -573,6 +578,7 @@ router.patch('/records/:id', async (req, res, next) => {
         foodPreference: response?.foodPreference || null,
         guests: response?.guests ?? null,
         tshirtSize: response?.tshirtSize || null,
+        tshirtFit: response?.tshirtFit || 'mens',
         message: response?.message || null,
         respondedAt: response?.updatedAt || null,
       },

@@ -25,6 +25,12 @@ const responseSchema = new mongoose.Schema(
       enum: ['XS', 'S', 'M', 'L', 'XL', 'XXL', null],
       default: null,
     },
+    // T-shirt cut, set by the admin for ordering. Defaults to men's/unisex.
+    tshirtFit: {
+      type: String,
+      enum: ['mens', 'womens'],
+      default: 'mens',
+    },
     message: { type: String, maxlength: 500, default: null },
     // Accommodation help for out-of-town batchmates travelling to Bhubaneswar.
     // Defaults to "not needed". Type only matters when accommodationNeeded=true.
