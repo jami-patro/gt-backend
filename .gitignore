@@ -12,3 +12,6 @@ CLOUDINARY_UPLOADS.md
 # Local one-off test/debug scripts (kept on disk, not committed)
 check_proof.js
 test_under_review.js
+
+# macOS Finder metadata
+.DS_Store
