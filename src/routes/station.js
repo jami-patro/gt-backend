@@ -108,6 +108,7 @@ router.post('/:token/scan', async (req, res, next) => {
     const base = {
       ok: true,
       name: user.name,
+      passNumber: user.passNumber ?? null,
       branch: user.branch || null,
       paid: user.paymentStatus === 'paid',
       tshirtSize: rsvp?.tshirtSize || null,

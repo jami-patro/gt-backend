@@ -43,6 +43,7 @@ async function buildRecords() {
     const r = byUser.get(String(u._id));
     return {
       id: u._id,
+      passNumber: u.passNumber ?? null,
       name: u.name,
       email: u.email,
       phone: u.phone,
@@ -158,7 +159,7 @@ router.get('/export.csv', async (_req, res, next) => {
     const rows = await buildRecords();
 
     const headers = [
-      'Name', 'Email', 'Phone', 'Branch', 'Roll Number', 'Approved',
+      'Pass No', 'Name', 'Email', 'Phone', 'Branch', 'Roll Number', 'Approved',
       'Attendance', 'Food', 'Guests', 'T-Shirt', 'T-Shirt Fit',
       'Payment Status', 'Contribution (INR)', 'Payment Reference Note',
       'Transaction / UTR', 'Payment Method', 'Payment Uploaded At', 'Reject Reason',
@@ -183,7 +184,7 @@ router.get('/export.csv', async (_req, res, next) => {
     const lines = [headers.join(',')];
     for (const r of rows) {
       lines.push([
-        r.name, r.email, r.phone, r.branch, r.rollNumber, r.approved ? 'Yes' : 'No',
+        r.passNumber ?? '', r.name, r.email, r.phone, r.branch, r.rollNumber, r.approved ? 'Yes' : 'No',
         r.attendance, r.foodPreference, r.guests, r.tshirtSize,
         r.tshirtFit === 'womens' ? "Women's" : "Men's",
         PAY_LABEL[r.paymentStatus] || 'Not paid', r.contributionAmount, r.paymentNote,
@@ -200,6 +201,47 @@ router.get('/export.csv', async (_req, res, next) => {
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="reunion-responses.csv"');
+    return res.send(lines.join('\n'));
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/admin/checkin-sheet.csv — a lean printable roster for the counters,
+// sorted by pass number. Only pass-holders (people who actually have a QR).
+// Columns: Pass No, Name, Branch, Checked In, T-Shirt Size, T-Shirt Collected,
+// Souvenir Collected. This is the manual fallback if a QR won't scan.
+router.get('/checkin-sheet.csv', async (_req, res, next) => {
+  try {
+    const rows = (await buildRecords())
+      .filter((r) => r.passNumber != null)
+      .sort((a, b) => a.passNumber - b.passNumber);
+
+    const headers = [
+      'Pass No', 'Name', 'Branch', 'Checked In',
+      'T-Shirt Size', 'T-Shirt Fit', 'T-Shirt Collected', 'Souvenir Collected',
+    ];
+    const esc = (v) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const lines = [headers.join(',')];
+    for (const r of rows) {
+      lines.push([
+        r.passNumber,
+        r.name,
+        r.branch,
+        r.eventPass?.checkedIn ? 'Yes' : 'No',
+        r.tshirtSize || '',
+        r.tshirtFit === 'womens' ? "Women's" : "Men's",
+        r.eventPass?.tshirt ? 'Yes' : 'No',
+        r.eventPass?.souvenir ? 'Yes' : 'No',
+      ].map(esc).join(','));
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="reunion-checkin-sheet.csv"');
     return res.send(lines.join('\n'));
   } catch (err) {
     return next(err);

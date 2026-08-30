@@ -44,6 +44,10 @@ const userSchema = new mongoose.Schema(
     // ABSENT fields, so two null tokens would collide on the unique index and
     // break registration with an E11000 duplicate-key error.
     passToken: { type: String, unique: true, sparse: true, index: true },
+    // Short human-friendly sequential pass number (1, 2, 3…), assigned once a
+    // member gets a pass. Printed on the check-in sheet so volunteers can find
+    // a guest by number if the QR won't scan. Assigned by the pre-save hook.
+    passNumber: { type: Number, default: null, index: true },
     // What they've collected at the venue. Volunteers scan the QR and toggle
     // these. `drinks` is a running count capped at 2.
     eventPass: {
@@ -59,6 +63,26 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+// Assign a sequential pass number the first time a member gets a pass token.
+// Runs on any .save()/.create() (all our pass-minting paths use these). We
+// take the current highest number + 1; fine for this small, low-concurrency
+// event.
+userSchema.pre('save', async function assignPassNumber(next) {
+  try {
+    if (this.passToken && this.passNumber == null) {
+      const top = await this.constructor
+        .findOne({ passNumber: { $ne: null } })
+        .sort({ passNumber: -1 })
+        .select('passNumber')
+        .lean();
+      this.passNumber = (top?.passNumber || 0) + 1;
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 export const User = mongoose.models.User || mongoose.model('User', userSchema);
 export default User;
