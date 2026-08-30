@@ -112,6 +112,9 @@ export const config = {
     // Optional venue tour video (e.g. a YouTube link).
     videoUrl: process.env.EVENT_VIDEO_URL || '',
     time: process.env.EVENT_TIME || '5:00 PM – 10:00 PM (TBD)',
+    // Hotel / accommodation note shown on the landing page. Left as a TBD
+    // placeholder until the hotel is finalised.
+    stay: process.env.EVENT_STAY || 'Hotel Accommodation — TBD',
     // One or more contacts, comma-separated. Each may be "Name" or
     // "Name - phone" (e.g. "Mrunal Jena - 9876543210, Srikanta Patro - 9123456789").
     contacts: (process.env.EVENT_CONTACT || 'Mrunal Jena')

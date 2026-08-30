@@ -15,6 +15,7 @@ router.get('/event', (_req, res) => {
     locationUrl: config.event.locationUrl,
     videoUrl: config.event.videoUrl,
     time: config.event.time,
+    stay: config.event.stay,
     contacts: config.event.contacts,
     schedule: config.event.schedule,
     galleryUrl: config.event.galleryUrl,
