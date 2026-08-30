@@ -207,11 +207,13 @@ router.get('/export.csv', async (_req, res, next) => {
   }
 });
 
-// GET /api/admin/checkin-sheet.csv — a lean printable roster for the counters,
-// sorted by pass number. Only pass-holders (people who actually have a QR).
-// Columns: Pass No, Name, Branch, Checked In, T-Shirt Size, T-Shirt Collected,
-// Souvenir Collected. This is the manual fallback if a QR won't scan.
-router.get('/checkin-sheet.csv', async (_req, res, next) => {
+// GET /api/admin/checkin-sheet.xls — a printable roster for the counters, for
+// ALL members, grouped by branch then name. Opens directly in Excel (it's an
+// HTML table with an .xls extension — no extra library needed). The three
+// action columns (Checked In, T-Shirt Collected, Souvenir Collected) are left
+// BLANK so volunteers can tick them by hand. This is the manual fallback if a
+// QR won't scan.
+router.get('/checkin-sheet.xls', async (_req, res, next) => {
   try {
     // Everyone (complete door reference), grouped by branch then by name.
     // Members with no branch sort to the end.
@@ -223,32 +225,49 @@ router.get('/checkin-sheet.csv', async (_req, res, next) => {
     });
 
     const headers = [
-      'Pass No', 'Name', 'Branch', 'Paid', 'Checked In',
-      'T-Shirt Size', 'T-Shirt Fit', 'T-Shirt Collected', 'Souvenir Collected',
+      'Pass No', 'Name', 'Branch', 'Paid', 'T-Shirt Size', 'T-Shirt Fit',
+      'Checked In', 'T-Shirt Collected', 'Souvenir Collected',
     ];
-    const esc = (v) => {
-      const s = v === null || v === undefined ? '' : String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
 
-    const lines = [headers.join(',')];
-    for (const r of rows) {
-      lines.push([
-        r.passNumber,
-        r.name,
-        r.branch,
-        r.paymentStatus === 'paid' ? 'Yes' : 'No',
-        r.eventPass?.checkedIn ? 'Yes' : 'No',
-        r.tshirtSize || '',
-        r.tshirtFit === 'womens' ? "Women's" : "Men's",
-        r.eventPass?.tshirt ? 'Yes' : 'No',
-        r.eventPass?.souvenir ? 'Yes' : 'No',
-      ].map(esc).join(','));
-    }
+    const esc = (v) =>
+      String(v === null || v === undefined ? '' : v)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="reunion-checkin-sheet.csv"');
-    return res.send(lines.join('\n'));
+    const th = headers
+      .map((h) => `<th style="border:1px solid #999;padding:4px 8px;background:#f2f2f2;">${esc(h)}</th>`)
+      .join('');
+
+    const trs = rows
+      .map((r) => {
+        const cells = [
+          r.passNumber ?? '',
+          r.name,
+          r.branch,
+          r.paymentStatus === 'paid' ? 'Yes' : 'No',
+          r.tshirtSize || '',
+          r.tshirtFit === 'womens' ? "Women's" : "Men's",
+          '', // Checked In — filled by hand
+          '', // T-Shirt Collected — filled by hand
+          '', // Souvenir Collected — filled by hand
+        ];
+        const tds = cells
+          .map((c) => `<td style="border:1px solid #999;padding:4px 8px;">${esc(c)}</td>`)
+          .join('');
+        return `<tr>${tds}</tr>`;
+      })
+      .join('');
+
+    const html =
+      `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">` +
+      `<head><meta charset="utf-8" /></head><body>` +
+      `<table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px;">` +
+      `<thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></body></html>`;
+
+    res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="reunion-checkin-sheet.xls"');
+    return res.send(html);
   } catch (err) {
     return next(err);
   }
