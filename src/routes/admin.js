@@ -213,9 +213,14 @@ router.get('/export.csv', async (_req, res, next) => {
 // Souvenir Collected. This is the manual fallback if a QR won't scan.
 router.get('/checkin-sheet.csv', async (_req, res, next) => {
   try {
-    const rows = (await buildRecords())
-      .filter((r) => r.passNumber != null)
-      .sort((a, b) => a.passNumber - b.passNumber);
+    // Everyone (complete door reference), grouped by branch then by name.
+    // Members with no branch sort to the end.
+    const rows = (await buildRecords()).sort((a, b) => {
+      const ab = (a.branch || '~').toLowerCase();
+      const bb = (b.branch || '~').toLowerCase();
+      if (ab !== bb) return ab.localeCompare(bb);
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
 
     const headers = [
       'Pass No', 'Name', 'Branch', 'Paid', 'Checked In',
