@@ -218,7 +218,7 @@ router.get('/checkin-sheet.csv', async (_req, res, next) => {
       .sort((a, b) => a.passNumber - b.passNumber);
 
     const headers = [
-      'Pass No', 'Name', 'Branch', 'Checked In',
+      'Pass No', 'Name', 'Branch', 'Paid', 'Checked In',
       'T-Shirt Size', 'T-Shirt Fit', 'T-Shirt Collected', 'Souvenir Collected',
     ];
     const esc = (v) => {
@@ -232,6 +232,7 @@ router.get('/checkin-sheet.csv', async (_req, res, next) => {
         r.passNumber,
         r.name,
         r.branch,
+        r.paymentStatus === 'paid' ? 'Yes' : 'No',
         r.eventPass?.checkedIn ? 'Yes' : 'No',
         r.tshirtSize || '',
         r.tshirtFit === 'womens' ? "Women's" : "Men's",
