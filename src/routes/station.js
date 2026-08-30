@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { User } from '../models/User.js';
+import { Response } from '../models/Response.js';
 import { resolveStationToken } from '../utils/stations.js';
 
 // Public volunteer-counter endpoints. Authorization is by the secret station
@@ -100,11 +101,17 @@ router.post('/:token/scan', async (req, res, next) => {
     const user = await User.findOne({ passToken });
     if (!user) return res.status(404).json({ error: 'Pass not recognized' });
 
+    // Pull the member's T-shirt size + fit so the counter (esp. the tee desk)
+    // knows what to hand over without looking it up separately.
+    const rsvp = await Response.findOne({ user: user._id }, 'tshirtSize tshirtFit').lean();
+
     const base = {
       ok: true,
       name: user.name,
       branch: user.branch || null,
       paid: user.paymentStatus === 'paid',
+      tshirtSize: rsvp?.tshirtSize || null,
+      tshirtFit: rsvp?.tshirtFit || 'mens',
       station: station.key,
       multi: Boolean(station.multi),
     };
@@ -144,11 +151,14 @@ router.post('/:token/mark', async (req, res, next) => {
 
     const result = applyAction(user, action);
     await user.save();
+    const rsvp = await Response.findOne({ user: user._id }, 'tshirtSize tshirtFit').lean();
     return res.json({
       ok: true,
       already: result.already,
       message: result.message,
       name: user.name,
+      tshirtSize: rsvp?.tshirtSize || null,
+      tshirtFit: rsvp?.tshirtFit || 'mens',
       status: shapePass(user),
     });
   } catch (err) {
