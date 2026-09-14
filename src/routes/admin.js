@@ -297,11 +297,21 @@ router.patch('/users/:id/approval', async (req, res, next) => {
 });
 
 // PATCH /api/admin/users/:id/payment — update contribution status/amount.
-// Body: { paymentStatus?, contributionAmount?, rejectReason? }
+// Body: { paymentStatus?, contributionAmount?, rejectReason?,
+//         paymentMethodUsed?, paymentNote?, paymentTransactionId? }
+// The last three let the admin record "who paid to which account" without
+// requiring the member to upload proof themselves.
 const PAYMENT_STATES = ['not_paid', 'pending', 'paid', 'rejected'];
 router.patch('/users/:id/payment', async (req, res, next) => {
   try {
-    const { paymentStatus, contributionAmount, rejectReason } = req.body || {};
+    const {
+      paymentStatus,
+      contributionAmount,
+      rejectReason,
+      paymentMethodUsed,
+      paymentNote,
+      paymentTransactionId,
+    } = req.body || {};
     const update = {};
 
     if (paymentStatus !== undefined) {
@@ -312,8 +322,13 @@ router.patch('/users/:id/payment', async (req, res, next) => {
       // Reject reason only meaningful for the rejected state.
       update.paymentRejectReason =
         paymentStatus === 'rejected' ? String(rejectReason || '').slice(0, 300) || 'Please re-upload' : null;
-      // Resetting to "not paid" also clears the recorded amount.
-      if (paymentStatus === 'not_paid') update.contributionAmount = 0;
+      // Resetting to "not paid" also clears the recorded amount and override info.
+      if (paymentStatus === 'not_paid') {
+        update.contributionAmount = 0;
+        update.paymentMethodUsed = null;
+        update.paymentNote = null;
+        update.paymentTransactionId = null;
+      }
     }
     if (contributionAmount !== undefined) {
       const amt = Number(contributionAmount);
@@ -321,6 +336,16 @@ router.patch('/users/:id/payment', async (req, res, next) => {
         return res.status(400).json({ error: 'contributionAmount must be a non-negative number' });
       }
       update.contributionAmount = Math.round(amt);
+    }
+    // Admin-recorded payment details (manual override — no proof upload needed).
+    if (paymentMethodUsed !== undefined) {
+      update.paymentMethodUsed = paymentMethodUsed ? String(paymentMethodUsed).trim().slice(0, 100) : null;
+    }
+    if (paymentNote !== undefined) {
+      update.paymentNote = paymentNote ? String(paymentNote).trim().slice(0, 300) : null;
+    }
+    if (paymentTransactionId !== undefined) {
+      update.paymentTransactionId = paymentTransactionId ? String(paymentTransactionId).trim().slice(0, 100) : null;
     }
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ error: 'Nothing to update' });
@@ -371,6 +396,9 @@ router.patch('/users/:id/payment', async (req, res, next) => {
       paymentStatus: target.paymentStatus,
       contributionAmount: target.contributionAmount,
       paymentRejectReason: target.paymentRejectReason || null,
+      paymentMethodUsed: target.paymentMethodUsed || null,
+      paymentNote: target.paymentNote || null,
+      paymentTransactionId: target.paymentTransactionId || null,
     });
   } catch (err) {
     return next(err);
