@@ -65,7 +65,7 @@ async function buildRecords() {
         drinks: Number(u.eventPass?.drinks) || 0,
       },
       hasProof: imageIds.has(String(u._id)),
-      hasProofOrTxn: imageIds.has(String(u._id)) || Boolean(u.paymentTransactionId),
+      hasProofOrTxn: imageIds.has(String(u._id)) || Boolean(u.paymentTransactionId) || Boolean(u.paymentNote),
       createdAt: u.createdAt,
       attendance: r?.attendance || null,
       foodPreference: r?.foodPreference || null,
@@ -298,9 +298,10 @@ router.patch('/users/:id/approval', async (req, res, next) => {
 
 // PATCH /api/admin/users/:id/payment — update contribution status/amount.
 // Body: { paymentStatus?, contributionAmount?, rejectReason?,
-//         paymentMethodUsed?, paymentNote?, paymentTransactionId? }
-// The last three let the admin record "who paid to which account" without
-// requiring the member to upload proof themselves.
+//         paymentMethodUsed?, paymentNote?, paymentTransactionId?,
+//         paymentProof? }
+// The last four let the admin record "who paid to which account" and optionally
+// attach a screenshot — without requiring the member to upload proof themselves.
 const PAYMENT_STATES = ['not_paid', 'pending', 'paid', 'rejected'];
 router.patch('/users/:id/payment', async (req, res, next) => {
   try {
@@ -311,6 +312,7 @@ router.patch('/users/:id/payment', async (req, res, next) => {
       paymentMethodUsed,
       paymentNote,
       paymentTransactionId,
+      paymentProof,
     } = req.body || {};
     const update = {};
 
@@ -328,6 +330,8 @@ router.patch('/users/:id/payment', async (req, res, next) => {
         update.paymentMethodUsed = null;
         update.paymentNote = null;
         update.paymentTransactionId = null;
+        update.paymentProof = null;
+        update.paymentProofUploadedAt = null;
       }
     }
     if (contributionAmount !== undefined) {
@@ -346,6 +350,14 @@ router.patch('/users/:id/payment', async (req, res, next) => {
     }
     if (paymentTransactionId !== undefined) {
       update.paymentTransactionId = paymentTransactionId ? String(paymentTransactionId).trim().slice(0, 100) : null;
+    }
+    // Admin-uploaded screenshot (base64 data URL, compressed client-side).
+    if (paymentProof !== undefined) {
+      if (paymentProof && !String(paymentProof).startsWith('data:image/')) {
+        return res.status(400).json({ error: 'paymentProof must be an image data URL' });
+      }
+      update.paymentProof = paymentProof || null;
+      update.paymentProofUploadedAt = paymentProof ? new Date() : null;
     }
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ error: 'Nothing to update' });
@@ -399,6 +411,7 @@ router.patch('/users/:id/payment', async (req, res, next) => {
       paymentMethodUsed: target.paymentMethodUsed || null,
       paymentNote: target.paymentNote || null,
       paymentTransactionId: target.paymentTransactionId || null,
+      hasProof: Boolean(target.paymentProof),
     });
   } catch (err) {
     return next(err);
