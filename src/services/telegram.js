@@ -58,6 +58,37 @@ export async function sendTelegram(text) {
   return result;
 }
 
+// Templated alert — fired when an admin manually records a payment override
+// (with or without a screenshot). Lets every organizer see it instantly.
+export async function sendAdminPaymentOverrideTelegram(user, { adminName = 'Admin' } = {}) {
+  if (!isTelegramEnabled()) return { ok: false, skipped: true };
+
+  const amt = Number(user.contributionAmount) || 0;
+  const amount = amt > 0 ? `₹${amt.toLocaleString('en-IN')}` : '—';
+  const hasScreenshot = Boolean(user.paymentProof);
+
+  const lines = [
+    `✅ <b>Payment recorded manually by ${escapeHtml(adminName)}</b>`,
+    '',
+    `<b>Member:</b> ${escapeHtml(user.name)}`,
+    `<b>Email:</b> ${escapeHtml(user.email)}`,
+    `<b>Branch:</b> ${escapeHtml(user.branch || '—')}`,
+    `<b>Amount:</b> ${escapeHtml(amount)}`,
+    `<b>Paid to:</b> ${escapeHtml(user.paymentMethodUsed || '—')}`,
+    `<b>Txn / UTR:</b> ${escapeHtml(user.paymentTransactionId || '—')}`,
+    `<b>Note:</b> ${escapeHtml(user.paymentNote || '—')}`,
+    `<b>Screenshot:</b> ${hasScreenshot ? '📎 Attached' : 'None'}`,
+  ];
+
+  const siteUrl = config.frontendUrls[0] || '';
+  const adminUrl = siteUrl ? `${siteUrl.replace(/\/$/, '')}/admin` : '';
+  if (adminUrl && /^https?:\/\//.test(adminUrl)) {
+    lines.push('', `<a href="${adminUrl}">Open admin dashboard</a>`);
+  }
+
+  return sendTelegram(lines.join('\n'));
+}
+
 // Templated alert — fired when a member submits payment proof.
 export async function sendPaymentSubmittedTelegram(user) {
   if (!isTelegramEnabled()) return { ok: false, skipped: true };

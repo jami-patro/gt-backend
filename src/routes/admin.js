@@ -14,6 +14,7 @@ import {
   sendPassEmail,
 } from '../services/email.js';
 import { generatePassToken, hashPassword, generateTempPassword, isValidEmail } from '../utils/auth.js';
+import { sendAdminPaymentOverrideTelegram } from '../services/telegram.js';
 import crypto from 'crypto';
 import QRCode from 'qrcode';
 
@@ -401,6 +402,19 @@ router.patch('/users/:id/payment', async (req, res, next) => {
       } catch (e) {
         console.warn('Pass/receipt email error:', e.message);
       }
+    }
+
+    // Telegram alert when the admin manually records a payment override
+    // (identified by the presence of any of the override-specific fields).
+    const isOverride = update.paymentMethodUsed !== undefined
+      || update.paymentNote !== undefined
+      || update.paymentTransactionId !== undefined
+      || update.paymentProof !== undefined;
+    if (update.paymentStatus === 'paid' && !wasPaid && isOverride) {
+      const adminName = req.user?.name || 'Admin';
+      sendAdminPaymentOverrideTelegram(target, { adminName }).catch((e) =>
+        console.warn('Telegram override alert error:', e.message),
+      );
     }
 
     return res.json({
