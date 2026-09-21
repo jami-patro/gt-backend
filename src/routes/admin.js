@@ -14,7 +14,7 @@ import {
   sendPassEmail,
 } from '../services/email.js';
 import { generatePassToken, hashPassword, generateTempPassword, isValidEmail } from '../utils/auth.js';
-import { sendAdminPaymentOverrideTelegram } from '../services/telegram.js';
+import { sendAdminPaymentOverrideTelegram, sendTelegram, isTelegramEnabled } from '../services/telegram.js';
 import crypto from 'crypto';
 import QRCode from 'qrcode';
 
@@ -404,13 +404,9 @@ router.patch('/users/:id/payment', async (req, res, next) => {
       }
     }
 
-    // Telegram alert when the admin manually records a payment override
-    // (identified by the presence of any of the override-specific fields).
-    const isOverride = update.paymentMethodUsed !== undefined
-      || update.paymentNote !== undefined
-      || update.paymentTransactionId !== undefined
-      || update.paymentProof !== undefined;
-    if (update.paymentStatus === 'paid' && !wasPaid && isOverride) {
+    // Telegram alert whenever the admin manually marks a payment as paid
+    // through the override route (whether or not optional fields were filled).
+    if (update.paymentStatus === 'paid' && !wasPaid) {
       const adminName = req.user?.name || 'Admin';
       sendAdminPaymentOverrideTelegram(target, { adminName }).catch((e) =>
         console.warn('Telegram override alert error:', e.message),
@@ -478,6 +474,36 @@ router.delete('/users/:id/proof', async (req, res, next) => {
       ok: true,
       paymentStatus: target.paymentStatus,
       contributionAmount: target.contributionAmount,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/admin/telegram/test — fire a test message and report config status.
+// Useful for verifying Vercel env vars are wired correctly without a real event.
+router.get('/telegram/test', async (req, res, next) => {
+  try {
+    const enabled = isTelegramEnabled();
+    const { botToken, chatIds } = config.telegram;
+    if (!enabled) {
+      return res.json({
+        enabled: false,
+        reason: !botToken
+          ? 'TELEGRAM_BOT_TOKEN is not set'
+          : 'TELEGRAM_CHAT_ID is not set or empty',
+        botTokenSet: Boolean(botToken),
+        chatIds,
+      });
+    }
+    const result = await sendTelegram(
+      `🔔 <b>Telegram test from admin dashboard</b>\n\nIf you see this, notifications are working correctly.\n<i>Sent by: ${req.user?.name || 'Admin'}</i>`,
+    );
+    return res.json({
+      enabled: true,
+      botTokenSet: true,
+      chatIds,
+      result,
     });
   } catch (err) {
     return next(err);
