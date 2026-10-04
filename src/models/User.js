@@ -13,10 +13,14 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, trim: true, default: null },
     branch: { type: String, trim: true, default: null },
     rollNumber: { type: String, trim: true, default: null },
+    // Current location/city (collected during check-in, optional).
+    location: { type: String, trim: true, default: null },
     passwordHash: { type: String, required: true },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
     // Members start unapproved; an admin approves them before their vote counts.
     approved: { type: Boolean, default: false },
+    // Track walk-in registrations (registered on-site vs pre-registered online).
+    isWalkIn: { type: Boolean, default: false },
     // Contribution tracking. Amounts in INR.
     // not_paid -> pending (proof uploaded) -> paid | rejected
     paymentStatus: {

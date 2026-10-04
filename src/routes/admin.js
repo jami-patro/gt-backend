@@ -50,7 +50,9 @@ async function buildRecords() {
       phone: u.phone,
       branch: u.branch,
       rollNumber: u.rollNumber,
+      location: u.location || null,
       approved: u.approved,
+      isWalkIn: Boolean(u.isWalkIn),
       paymentStatus: u.paymentStatus || 'not_paid',
       contributionAmount: u.contributionAmount ?? 0,
       paymentNote: u.paymentNote || null,
@@ -748,7 +750,7 @@ router.patch('/users/:id/eventpass', async (req, res, next) => {
       return res.status(403).json({ error: 'Admin accounts have no event pass' });
     }
 
-    const { checkedIn, tshirt, souvenir } = req.body || {};
+    const { checkedIn, tshirt, souvenir, location } = req.body || {};
     const now = new Date();
     if (!user.eventPass) user.eventPass = {};
 
@@ -764,10 +766,15 @@ router.patch('/users/:id/eventpass', async (req, res, next) => {
       user.eventPass.souvenir = Boolean(souvenir);
       user.eventPass.souvenirAt = souvenir ? now : null;
     }
+    // Update location if provided (optional city/location info).
+    if (location !== undefined) {
+      user.location = location ? String(location).trim() : null;
+    }
 
     await user.save();
     return res.json({
       ok: true,
+      location: user.location,
       eventPass: {
         checkedIn: Boolean(user.eventPass.checkedIn),
         tshirt: Boolean(user.eventPass.tshirt),
@@ -959,6 +966,7 @@ router.post('/walkin', async (req, res, next) => {
       passwordHash: hashPassword(generateTempPassword(12)),
       role: 'user',
       approved: true,
+      isWalkIn: true, // Mark as walk-in registration
       passToken: generatePassToken(),
       paymentStatus: markPaid ? 'paid' : 'not_paid',
       contributionAmount: markPaid ? amount : 0,
