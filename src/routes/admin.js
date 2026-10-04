@@ -736,6 +736,49 @@ router.patch('/records/:id', async (req, res, next) => {
   }
 });
 
+// PATCH /api/admin/users/:id/eventpass — update event-day redemptions by user ID.
+// Body: { checkedIn?, tshirt?, souvenir? } (all booleans, all optional).
+// Simpler alternative to PATCH /api/admin/pass/:token when you have the user's
+// _id (from GET /api/admin/responses) but not their passToken.
+router.patch('/users/:id/eventpass', async (req, res, next) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts have no event pass' });
+    }
+
+    const { checkedIn, tshirt, souvenir } = req.body || {};
+    const now = new Date();
+    if (!user.eventPass) user.eventPass = {};
+
+    if (checkedIn !== undefined) {
+      user.eventPass.checkedIn = Boolean(checkedIn);
+      user.eventPass.checkedInAt = checkedIn ? now : null;
+    }
+    if (tshirt !== undefined) {
+      user.eventPass.tshirt = Boolean(tshirt);
+      user.eventPass.tshirtAt = tshirt ? now : null;
+    }
+    if (souvenir !== undefined) {
+      user.eventPass.souvenir = Boolean(souvenir);
+      user.eventPass.souvenirAt = souvenir ? now : null;
+    }
+
+    await user.save();
+    return res.json({
+      ok: true,
+      eventPass: {
+        checkedIn: Boolean(user.eventPass.checkedIn),
+        tshirt: Boolean(user.eventPass.tshirt),
+        souvenir: Boolean(user.eventPass.souvenir),
+      },
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 // Resolve the recipient list for a broadcast audience. Returns { name, email }
 // objects so broadcasts can be personalized.
 // audience: 'all' | 'approved' | 'pending' | 'attending'
