@@ -40,3 +40,11 @@ export function requireAdmin(req, res, next) {
   }
   return next();
 }
+
+// Requires the authenticated user to be admin or volunteer. Use after requireAuth.
+export function requireAdminOrVolunteer(req, res, next) {
+  if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'volunteer')) {
+    return res.status(403).json({ error: 'Admin or volunteer access required' });
+  }
+  return next();
+}

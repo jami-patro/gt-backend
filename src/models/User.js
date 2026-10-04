@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema(
     // Current location/city (collected during check-in, optional).
     location: { type: String, trim: true, default: null },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: ['user', 'admin'], default: 'user' },
+    role: { type: String, enum: ['user', 'admin', 'volunteer'], default: 'user' },
     // Members start unapproved; an admin approves them before their vote counts.
     approved: { type: Boolean, default: false },
     // Track walk-in registrations (registered on-site vs pre-registered online).

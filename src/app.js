@@ -10,6 +10,7 @@ import authRoutes from './routes/auth.js';
 import rsvpRoutes from './routes/rsvp.js';
 import publicRoutes from './routes/public.js';
 import adminRoutes from './routes/admin.js';
+import volunteerRoutes from './routes/volunteer.js';
 import stationRoutes from './routes/station.js';
 import galleryRoutes from './routes/gallery.js';
 
@@ -56,6 +57,7 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/rsvp', rsvpRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/volunteer', volunteerRoutes);
 app.use('/api/station', stationRoutes);
 app.use('/api/gallery', galleryRoutes);
 
