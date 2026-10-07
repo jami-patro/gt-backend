@@ -145,6 +145,8 @@ router.post('/walkin', async (req, res, next) => {
     const markPaid = Boolean(b.markPaid) && amount > 0;
     const checkIn = b.checkIn === undefined ? true : Boolean(b.checkIn);
     const paymentProof = b.paymentProof && String(b.paymentProof).trim() ? String(b.paymentProof) : null;
+    const paymentNote = b.paymentNote && String(b.paymentNote).trim() ? String(b.paymentNote).slice(0, 300) : null;
+    const paymentMethodUsed = b.paymentMethodUsed && String(b.paymentMethodUsed).trim() ? String(b.paymentMethodUsed).slice(0, 100) : null;
 
     const user = await User.create({
       name,
@@ -161,6 +163,8 @@ router.post('/walkin', async (req, res, next) => {
       contributionAmount: markPaid ? amount : 0,
       paymentProof: paymentProof,
       paymentProofUploadedAt: paymentProof ? new Date() : null,
+      paymentNote: paymentNote,
+      paymentMethodUsed: paymentMethodUsed,
       eventPass: {
         checkedIn: checkIn,
         checkedInAt: checkIn ? new Date() : null,
