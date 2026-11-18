@@ -181,7 +181,9 @@ router.get('/export.csv', async (_req, res, next) => {
 
     const esc = (v) => {
       const s = v === null || v === undefined ? '' : String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      // Remove newlines, carriage returns, and tabs, then escape quotes
+      const cleaned = s.replace(/[\r\n\t]+/g, ' ').trim();
+      return /[",\n]/.test(cleaned) ? `"${cleaned.replace(/"/g, '""')}"` : cleaned;
     };
 
     const lines = [headers.join(',')];
@@ -202,9 +204,11 @@ router.get('/export.csv', async (_req, res, next) => {
       ].map(esc).join(','));
     }
 
+    const csv = lines.join('\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="reunion-responses.csv"');
-    return res.send(lines.join('\n'));
+    res.setHeader('Content-Length', Buffer.byteLength(csv));
+    return res.send(csv);
   } catch (err) {
     return next(err);
   }

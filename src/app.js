@@ -10,6 +10,7 @@ import authRoutes from './routes/auth.js';
 import rsvpRoutes from './routes/rsvp.js';
 import publicRoutes from './routes/public.js';
 import adminRoutes from './routes/admin.js';
+import financeRoutes from './routes/finance.js';
 import volunteerRoutes from './routes/volunteer.js';
 import stationRoutes from './routes/station.js';
 import galleryRoutes from './routes/gallery.js';
@@ -56,6 +57,9 @@ const authLimiter = rateLimit({
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/rsvp', rsvpRoutes);
 app.use('/api/public', publicRoutes);
+// Finance is mounted before the general admin router so its more specific
+// path matches first (both are admin-only).
+app.use('/api/admin/finance', financeRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/volunteer', volunteerRoutes);
 app.use('/api/station', stationRoutes);
