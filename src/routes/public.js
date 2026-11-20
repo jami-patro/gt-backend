@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { User } from '../models/User.js';
 import { Response } from '../models/Response.js';
 import { Setting } from '../models/Setting.js';
+import { Expense } from '../models/Expense.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -154,6 +155,90 @@ router.get('/contributors', async (_req, res, next) => {
       count: rows.length,
       contributors: rows.map((u) => ({ name: u.name, branch: u.branch || null })),
     });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/public/finance — public accounts/transparency panel. Only returns
+// figures when an admin has PUBLISHED them (Setting 'financePublic'). Never
+// exposes receipts, funds, payers, or per-installment details — just the
+// quotation / paid / due per expense and the collected/spent/balance totals.
+router.get('/finance', async (_req, res, next) => {
+  try {
+    const published = Boolean(await Setting.get('financePublic', false));
+    if (!published) return res.json({ published: false });
+
+    const [collectedAgg] = await User.aggregate([
+      { $match: { role: 'user', paymentStatus: 'paid' } },
+      { $group: { _id: null, total: { $sum: '$contributionAmount' }, count: { $sum: 1 } } },
+    ]);
+    const collected = collectedAgg?.total || 0;
+    const contributors = collectedAgg?.count || 0;
+
+    const [rows, withQuote] = await Promise.all([
+      Expense.find({})
+        .select('description category paidTo quotationAmount amount note spentAt createdAt')
+        .sort({ spentAt: -1, createdAt: -1 })
+        .lean(),
+      // Which expenses have a quotation document (ids only — no heavy blobs).
+      Expense.find({ quotationProof: { $ne: null } }).select('_id').lean(),
+    ]);
+    const quoteIds = new Set(withQuote.map((e) => String(e._id)));
+
+    let spent = 0;
+    let outstanding = 0;
+    const expenses = rows.map((e) => {
+      const paid = Number(e.amount) || 0;
+      const quotation = Number(e.quotationAmount) || 0;
+      const due = quotation > 0 ? Math.max(0, quotation - paid) : 0;
+      spent += paid;
+      outstanding += due;
+      return {
+        id: e._id,
+        description: e.description,
+        category: e.category || 'Other',
+        vendor: e.paidTo || null,
+        note: e.note || null,
+        quotation,
+        paid,
+        due,
+        hasQuotationProof: quoteIds.has(String(e._id)),
+      };
+    });
+
+    return res.json({
+      published: true,
+      totals: {
+        collected,
+        contributors,
+        // Standard per-person contribution (for a "N × ₹X" breakdown).
+        perHead: Number(config.payment.amount) || 0,
+        spent,
+        outstanding,
+        balance: collected - spent,
+      },
+      expenses,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/public/finance/expenses/:id/quotation-proof — the quotation document
+// for one expense. Only served while the accounts are published; never exposes
+// payment receipts or any other proof.
+router.get('/finance/expenses/:id/quotation-proof', async (req, res, next) => {
+  try {
+    const published = Boolean(await Setting.get('financePublic', false));
+    if (!published) return res.status(404).json({ error: 'Not available' });
+
+    const e = await Expense.findById(req.params.id)
+      .select('description quotationProof')
+      .lean()
+      .catch(() => null);
+    if (!e || !e.quotationProof) return res.status(404).json({ error: 'No quotation attached' });
+    return res.json({ description: e.description, image: e.quotationProof });
   } catch (err) {
     return next(err);
   }

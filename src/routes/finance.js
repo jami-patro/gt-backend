@@ -57,25 +57,64 @@ async function getCollectedByMethod() {
   return map; // Map<label, { amount, count }>
 }
 
-// Shape an expense doc for the API. The `proof` blob is intentionally omitted
-// (lazy-loaded via the /:id/proof route) to keep responses small. Because list
-// queries exclude the `proof` field for payload size, `hasProof` can't be
-// derived from `e.proof` there — pass it explicitly in that case.
-function shapeExpense(e, hasProof) {
+// Keep `amount` (total paid) equal to the sum of the installments. Called on
+// any write that touches payments.
+function recalcAmount(expense) {
+  const list = Array.isArray(expense.payments) ? expense.payments : [];
+  expense.amount = list.reduce((sum, p) => sum + (Math.round(Number(p.amount)) || 0), 0);
+}
+
+// Shape one installment for the API — never includes the proof blob. Works on
+// both a Mongoose subdoc (has `proof`) and an aggregation row (has `hasProof`).
+function shapePayment(p) {
+  return {
+    id: String(p._id || p.id || ''),
+    amount: p.amount ?? 0,
+    method: p.method || 'cash',
+    bucket: p.bucket || null,
+    paidAt: p.paidAt || p.createdAt || null,
+    note: p.note || null,
+    recordedBy: p.recordedBy || null,
+    hasProof: p.hasProof !== undefined ? Boolean(p.hasProof) : Boolean(p.proof),
+    createdAt: p.createdAt || null,
+  };
+}
+
+// Shape an expense for the API. Proof blobs are omitted (lazy-loaded). Accepts
+// either a Mongoose doc (blobs present) or an aggregation row (boolean flags).
+function shapeExpense(e) {
+  const payments = (Array.isArray(e.payments) ? e.payments : []).map(shapePayment);
+  // Total paid is the sum of installments; fall back to the stored amount for
+  // any (not-yet-migrated) record without payments.
+  const amount = payments.length
+    ? payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    : e.amount ?? 0;
+  const quotationAmount = e.quotationAmount ?? 0;
+  // Still owed to the vendor. Only meaningful once a quotation is set; never
+  // negative (overpayments show as 0 outstanding).
+  const outstanding = quotationAmount > 0 ? Math.max(0, quotationAmount - amount) : 0;
+  const hasQuotationProof =
+    e.hasQuotationProof !== undefined ? Boolean(e.hasQuotationProof) : Boolean(e.quotationProof);
   return {
     id: e._id,
     description: e.description,
     category: e.category || 'Other',
-    amount: e.amount ?? 0,
+    amount, // total paid
+    quotationAmount,
+    advancePaid: e.advancePaid ?? 0,
+    outstanding,
     bucket: e.bucket || null,
     paidBy: e.paidBy,
     paidTo: e.paidTo || null,
-    paymentMethod: e.paymentMethod || 'cash',
     spentAt: e.spentAt || e.createdAt || null,
     note: e.note || null,
     recordedBy: e.recordedBy || null,
-    hasProof: hasProof !== undefined ? Boolean(hasProof) : Boolean(e.proof),
-    proofUploadedAt: e.proofUploadedAt || null,
+    payments,
+    paymentCount: payments.length,
+    // Convenience flag: any installment has a receipt.
+    hasProof: payments.some((p) => p.hasProof),
+    hasQuotationProof,
+    quotationProofUploadedAt: e.quotationProofUploadedAt || null,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -86,17 +125,48 @@ function shapeExpense(e, hasProof) {
 // expense ledger.
 router.get('/', async (_req, res, next) => {
   try {
-    const [collectedByMethod, buckets, expenses, withProof] = await Promise.all([
+    const [collectedByMethod, buckets, financePublic, expenses] = await Promise.all([
       getCollectedByMethod(),
       getBuckets(),
-      // Exclude the heavy proof blob from the list; fetch which ids have one
-      // separately so we can still report `hasProof` without the payload cost.
-      Expense.find({}).select('-proof').sort({ spentAt: -1, createdAt: -1 }).lean(),
-      Expense.find({ proof: { $ne: null } }).select('_id').lean(),
+      Setting.get('financePublic', false),
+      // Aggregation converts the heavy proof blobs into booleans (per-payment
+      // and for the quotation) and drops them, so the list stays small while
+      // still reporting which receipts exist.
+      Expense.aggregate([
+        { $sort: { spentAt: -1, createdAt: -1 } },
+        {
+          $addFields: {
+            hasQuotationProof: { $gt: [{ $strLenCP: { $ifNull: ['$quotationProof', ''] } }, 0] },
+            payments: {
+              $map: {
+                input: { $ifNull: ['$payments', []] },
+                as: 'p',
+                in: {
+                  _id: '$$p._id',
+                  amount: '$$p.amount',
+                  method: '$$p.method',
+                  bucket: '$$p.bucket',
+                  paidAt: '$$p.paidAt',
+                  note: '$$p.note',
+                  recordedBy: '$$p.recordedBy',
+                  createdAt: '$$p.createdAt',
+                  hasProof: { $gt: [{ $strLenCP: { $ifNull: ['$$p.proof', ''] } }, 0] },
+                },
+              },
+            },
+          },
+        },
+        { $project: { proof: 0, quotationProof: 0 } },
+      ]),
     ]);
-    const proofIds = new Set(withProof.map((e) => String(e._id)));
 
     const spent = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    // Total still owed to vendors across all expenses (quotation − paid, ≥0).
+    const outstanding = expenses.reduce((sum, e) => {
+      const q = Number(e.quotationAmount) || 0;
+      const paid = Number(e.amount) || 0;
+      return sum + (q > 0 ? Math.max(0, q - paid) : 0);
+    }, 0);
     let collected = 0;
     let collectedCount = 0;
     for (const v of collectedByMethod.values()) {
@@ -104,12 +174,25 @@ router.get('/', async (_req, res, next) => {
       collectedCount += v.count;
     }
 
-    // Spend grouped by fund (money drawn out of each holder's pot).
+    // Spend grouped by fund (money drawn out of each holder's pot). Each
+    // installment can be drawn from a different fund, so we group by the
+    // payment's own bucket (falling back to the expense's bucket). Expenses
+    // with no payments contribute nothing.
     const spentByBucket = new Map();
     for (const e of expenses) {
-      const key = (e.bucket || '').trim();
-      if (!key) continue;
-      spentByBucket.set(key, (spentByBucket.get(key) || 0) + (Number(e.amount) || 0));
+      const list = Array.isArray(e.payments) ? e.payments : [];
+      if (list.length > 0) {
+        for (const p of list) {
+          const key = (p.bucket || e.bucket || '').trim();
+          if (!key) continue;
+          spentByBucket.set(key, (spentByBucket.get(key) || 0) + (Number(p.amount) || 0));
+        }
+      } else {
+        // Legacy/no-payments fallback: attribute the stored amount to the
+        // expense bucket (keeps old records correct until they get payments).
+        const key = (e.bucket || '').trim();
+        if (key) spentByBucket.set(key, (spentByBucket.get(key) || 0) + (Number(e.amount) || 0));
+      }
     }
 
     // Build the per-fund view: collected into it (from its mapped methods),
@@ -168,14 +251,19 @@ router.get('/', async (_req, res, next) => {
         collectedCount,
         spent,
         balance: collected - spent,
+        // Unpaid vendor dues, and the balance that would remain after clearing
+        // them (collected − paid − still-owed).
+        outstanding,
+        balanceAfterDues: collected - spent - outstanding,
         expenseCount: expenses.length,
       },
       funds: fundRows,
       unassigned,
       orphanSpend,
+      financePublic: Boolean(financePublic),
       bucketNames: buckets.map((b) => b.name),
       byCategory,
-      expenses: expenses.map((e) => shapeExpense(e, proofIds.has(String(e._id)))),
+      expenses: expenses.map((e) => shapeExpense(e)),
     });
   } catch (err) {
     return next(err);
@@ -228,8 +316,24 @@ router.put('/buckets', async (req, res, next) => {
   }
 });
 
-// Validate + normalize an incoming expense body. Returns { data } or { error }.
-function parseExpenseBody(body, { partial = false } = {}) {
+// PATCH /api/admin/finance/publish — show/hide the public accounts panel on the
+// landing page. Body: { published: true|false }.
+router.patch('/publish', async (req, res, next) => {
+  try {
+    const { published } = req.body || {};
+    if (typeof published !== 'boolean') {
+      return res.status(400).json({ error: 'published (boolean) is required' });
+    }
+    await Setting.set('financePublic', published);
+    return res.json({ ok: true, financePublic: published });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// Validate + normalize the expense METADATA (everything except the money paid,
+// which lives in payments). Returns { data } or { error }.
+function parseExpenseMeta(body, { partial = false } = {}) {
   const b = body || {};
   const data = {};
 
@@ -239,12 +343,19 @@ function parseExpenseBody(body, { partial = false } = {}) {
     data.description = description.slice(0, 300);
   }
 
-  if (b.amount !== undefined || !partial) {
-    const amount = Number(b.amount);
-    if (Number.isNaN(amount) || amount < 0) {
-      return { error: 'Amount must be a non-negative number' };
+  if (b.quotationAmount !== undefined) {
+    const q = Number(b.quotationAmount);
+    if (Number.isNaN(q) || q < 0) {
+      return { error: 'Quotation amount must be a non-negative number' };
     }
-    data.amount = Math.round(amount);
+    data.quotationAmount = Math.round(q);
+  }
+  if (b.advancePaid !== undefined) {
+    const a = Number(b.advancePaid);
+    if (Number.isNaN(a) || a < 0) {
+      return { error: 'Advance paid must be a non-negative number' };
+    }
+    data.advancePaid = Math.round(a);
   }
 
   if (b.paidBy !== undefined || !partial) {
@@ -262,47 +373,94 @@ function parseExpenseBody(body, { partial = false } = {}) {
   if (b.paidTo !== undefined) {
     data.paidTo = b.paidTo ? String(b.paidTo).trim().slice(0, 120) : null;
   }
-  if (b.paymentMethod !== undefined) {
-    const pm = String(b.paymentMethod || '').trim().toLowerCase();
-    if (pm && !PAYMENT_METHODS.includes(pm)) {
-      return { error: `paymentMethod must be one of ${PAYMENT_METHODS.join(', ')}` };
-    }
-    data.paymentMethod = pm || 'cash';
-  }
-  if (b.spentAt !== undefined) {
-    if (b.spentAt) {
-      const d = new Date(b.spentAt);
-      if (Number.isNaN(d.getTime())) return { error: 'spentAt is not a valid date' };
-      data.spentAt = d;
-    }
+  if (b.spentAt !== undefined && b.spentAt) {
+    const d = new Date(b.spentAt);
+    if (Number.isNaN(d.getTime())) return { error: 'spentAt is not a valid date' };
+    data.spentAt = d;
   }
   if (b.note !== undefined) {
     data.note = b.note ? String(b.note).trim().slice(0, 500) : null;
   }
-  // Proof: a compressed image data URL, or null/'' to clear it.
-  if (b.proof !== undefined) {
-    if (b.proof && !String(b.proof).startsWith('data:image/')) {
-      return { error: 'proof must be an image data URL' };
+  // Quotation document: a compressed image data URL, or null/'' to clear it.
+  if (b.quotationProof !== undefined) {
+    if (b.quotationProof && !String(b.quotationProof).startsWith('data:image/')) {
+      return { error: 'quotationProof must be an image data URL' };
     }
-    data.proof = b.proof || null;
-    data.proofUploadedAt = b.proof ? new Date() : null;
+    data.quotationProof = b.quotationProof || null;
+    data.quotationProofUploadedAt = b.quotationProof ? new Date() : null;
   }
 
   return { data };
 }
 
-// POST /api/admin/finance/expenses — log a new expenditure.
+// Validate + normalize a single installment. Returns { payment } or { error }.
+function parsePayment(body, recordedBy) {
+  const b = body || {};
+  const amount = Number(b.amount);
+  if (Number.isNaN(amount) || amount < 0) {
+    return { error: 'Payment amount must be a non-negative number' };
+  }
+  const method = String(b.method || b.paymentMethod || 'cash').trim().toLowerCase();
+  if (method && !PAYMENT_METHODS.includes(method)) {
+    return { error: `method must be one of ${PAYMENT_METHODS.join(', ')}` };
+  }
+  const proof = b.proof || null;
+  if (proof && !String(proof).startsWith('data:image/')) {
+    return { error: 'proof must be an image data URL' };
+  }
+  // UPI installments must come with a receipt.
+  if (method === 'upi' && !proof) {
+    return { error: 'A payment proof is required for UPI payments' };
+  }
+  let paidAt;
+  if (b.paidAt || b.spentAt) {
+    const d = new Date(b.paidAt || b.spentAt);
+    if (Number.isNaN(d.getTime())) return { error: 'paidAt is not a valid date' };
+    paidAt = d;
+  }
+  return {
+    payment: {
+      amount: Math.round(amount),
+      method: method || 'cash',
+      bucket: b.bucket ? String(b.bucket).trim().slice(0, 120) : null,
+      paidAt: paidAt || new Date(),
+      proof,
+      note: b.note ? String(b.note).trim().slice(0, 300) : null,
+      recordedBy: recordedBy || 'Admin',
+    },
+  };
+}
+
+// POST /api/admin/finance/expenses — log a new expenditure. Optionally records
+// an initial payment when `amount` > 0 (its method/proof/date come from the
+// same body); otherwise the expense starts quotation-only (nothing paid yet).
 router.post('/expenses', async (req, res, next) => {
   try {
-    const { data, error } = parseExpenseBody(req.body, { partial: false });
+    const { data, error } = parseExpenseMeta(req.body, { partial: false });
     if (error) return res.status(400).json({ error });
 
-    // UPI spends must come with a receipt image.
-    if ((data.paymentMethod || 'cash') === 'upi' && !data.proof) {
-      return res.status(400).json({ error: 'A payment proof is required for UPI payments' });
+    const recordedBy = req.user?.name || 'Admin';
+    data.recordedBy = recordedBy;
+    data.payments = [];
+
+    // Optional initial installment. Its fund defaults to the expense's fund.
+    if (req.body?.amount !== undefined && Number(req.body.amount) > 0) {
+      const { payment, error: payErr } = parsePayment(
+        {
+          amount: req.body.amount,
+          method: req.body.paymentMethod || req.body.method,
+          bucket: req.body.paymentBucket || data.bucket || null,
+          proof: req.body.proof,
+          paidAt: req.body.paidAt || req.body.spentAt,
+          note: req.body.paymentNote,
+        },
+        recordedBy,
+      );
+      if (payErr) return res.status(400).json({ error: payErr });
+      data.payments.push(payment);
     }
 
-    data.recordedBy = req.user?.name || 'Admin';
+    data.amount = data.payments.reduce((s, p) => s + p.amount, 0);
     const created = await Expense.create(data);
     return res.status(201).json({ ok: true, expense: shapeExpense(created) });
   } catch (err) {
@@ -310,10 +468,11 @@ router.post('/expenses', async (req, res, next) => {
   }
 });
 
-// PATCH /api/admin/finance/expenses/:id — edit an existing expenditure.
+// PATCH /api/admin/finance/expenses/:id — edit metadata only. Payments are
+// managed through the dedicated payment endpoints below.
 router.patch('/expenses/:id', async (req, res, next) => {
   try {
-    const { data, error } = parseExpenseBody(req.body, { partial: true });
+    const { data, error } = parseExpenseMeta(req.body, { partial: true });
     if (error) return res.status(400).json({ error });
     if (Object.keys(data).length === 0) {
       return res.status(400).json({ error: 'Nothing to update' });
@@ -323,10 +482,6 @@ router.patch('/expenses/:id', async (req, res, next) => {
     if (!expense) return res.status(404).json({ error: 'Expense not found' });
 
     Object.assign(expense, data);
-    // UPI spends must have a receipt — either already stored or supplied here.
-    if ((expense.paymentMethod || 'cash') === 'upi' && !expense.proof) {
-      return res.status(400).json({ error: 'A payment proof is required for UPI payments' });
-    }
     expense.recordedBy = req.user?.name || expense.recordedBy || 'Admin';
     await expense.save();
     return res.json({ ok: true, expense: shapeExpense(expense) });
@@ -335,7 +490,130 @@ router.patch('/expenses/:id', async (req, res, next) => {
   }
 });
 
-// GET /api/admin/finance/expenses/:id/proof — lazy-load the receipt image.
+// POST /api/admin/finance/expenses/:id/payments — add an installment.
+// Body: { amount, method?, paidAt?, proof?, note? }
+router.post('/expenses/:id/payments', async (req, res, next) => {
+  try {
+    const { payment, error } = parsePayment(req.body, req.user?.name || 'Admin');
+    if (error) return res.status(400).json({ error });
+    if (!(payment.amount > 0)) {
+      return res.status(400).json({ error: 'Payment amount must be greater than 0' });
+    }
+
+    const expense = await Expense.findById(req.params.id);
+    if (!expense) return res.status(404).json({ error: 'Expense not found' });
+
+    // Default this installment's fund to the expense's fund when unspecified.
+    if (!payment.bucket) payment.bucket = expense.bucket || null;
+    expense.payments.push(payment);
+    recalcAmount(expense);
+    await expense.save();
+    return res.status(201).json({ ok: true, expense: shapeExpense(expense) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PATCH /api/admin/finance/expenses/:id/payments/:paymentId — edit one
+// installment in place. Body may include any of: amount, method, bucket,
+// paidAt, note, proof (image data URL to replace, or '' / null to clear).
+router.patch('/expenses/:id/payments/:paymentId', async (req, res, next) => {
+  try {
+    const expense = await Expense.findById(req.params.id);
+    if (!expense) return res.status(404).json({ error: 'Expense not found' });
+
+    const payment = expense.payments.id(req.params.paymentId);
+    if (!payment) return res.status(404).json({ error: 'Payment not found' });
+
+    const b = req.body || {};
+
+    if (b.amount !== undefined) {
+      const amount = Number(b.amount);
+      if (Number.isNaN(amount) || amount <= 0) {
+        return res.status(400).json({ error: 'Payment amount must be greater than 0' });
+      }
+      payment.amount = Math.round(amount);
+    }
+    if (b.method !== undefined) {
+      const m = String(b.method || '').trim().toLowerCase();
+      if (m && !PAYMENT_METHODS.includes(m)) {
+        return res.status(400).json({ error: `method must be one of ${PAYMENT_METHODS.join(', ')}` });
+      }
+      payment.method = m || 'cash';
+    }
+    if (b.bucket !== undefined) {
+      payment.bucket = b.bucket ? String(b.bucket).trim().slice(0, 120) : null;
+    }
+    if (b.paidAt !== undefined && b.paidAt) {
+      const d = new Date(b.paidAt);
+      if (Number.isNaN(d.getTime())) return res.status(400).json({ error: 'paidAt is not a valid date' });
+      payment.paidAt = d;
+    }
+    if (b.note !== undefined) {
+      payment.note = b.note ? String(b.note).trim().slice(0, 300) : null;
+    }
+    // Replace the receipt when a new image is supplied; clear it on '' or null.
+    if (b.proof !== undefined) {
+      if (b.proof && !String(b.proof).startsWith('data:image/')) {
+        return res.status(400).json({ error: 'proof must be an image data URL' });
+      }
+      payment.proof = b.proof || null;
+    }
+
+    // UPI installments must keep a receipt.
+    if ((payment.method || 'cash') === 'upi' && !payment.proof) {
+      return res.status(400).json({ error: 'A payment proof is required for UPI payments' });
+    }
+
+    payment.recordedBy = req.user?.name || payment.recordedBy || 'Admin';
+    recalcAmount(expense);
+    await expense.save();
+    return res.json({ ok: true, expense: shapeExpense(expense) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// DELETE /api/admin/finance/expenses/:id/payments/:paymentId — remove one
+// installment and recompute the total paid.
+router.delete('/expenses/:id/payments/:paymentId', async (req, res, next) => {
+  try {
+    const expense = await Expense.findById(req.params.id);
+    if (!expense) return res.status(404).json({ error: 'Expense not found' });
+
+    const payment = expense.payments.id(req.params.paymentId);
+    if (!payment) return res.status(404).json({ error: 'Payment not found' });
+
+    payment.deleteOne();
+    recalcAmount(expense);
+    await expense.save();
+    return res.json({ ok: true, expense: shapeExpense(expense) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/admin/finance/expenses/:id/payments/:paymentId/proof — the receipt
+// image for one installment.
+router.get('/expenses/:id/payments/:paymentId/proof', async (req, res, next) => {
+  try {
+    const e = await Expense.findById(req.params.id).select('description paidBy payments').lean();
+    if (!e) return res.status(404).json({ error: 'Expense not found' });
+    const p = (e.payments || []).find((x) => String(x._id) === req.params.paymentId);
+    if (!p) return res.status(404).json({ error: 'Payment not found' });
+    if (!p.proof) return res.status(404).json({ error: 'No proof attached' });
+    return res.json({
+      description: e.description,
+      paidBy: e.paidBy,
+      image: p.proof,
+      uploadedAt: p.paidAt || p.createdAt || null,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/admin/finance/expenses/:id/proof — lazy-load the payment receipt.
 router.get('/expenses/:id/proof', async (req, res, next) => {
   try {
     const e = await Expense.findById(req.params.id)
@@ -348,6 +626,25 @@ router.get('/expenses/:id/proof', async (req, res, next) => {
       paidBy: e.paidBy,
       image: e.proof,
       uploadedAt: e.proofUploadedAt || null,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/admin/finance/expenses/:id/quotation-proof — lazy-load the quote doc.
+router.get('/expenses/:id/quotation-proof', async (req, res, next) => {
+  try {
+    const e = await Expense.findById(req.params.id)
+      .select('description paidBy quotationProof quotationProofUploadedAt')
+      .lean();
+    if (!e) return res.status(404).json({ error: 'Expense not found' });
+    if (!e.quotationProof) return res.status(404).json({ error: 'No quotation attached' });
+    return res.json({
+      description: e.description,
+      paidBy: e.paidBy,
+      image: e.quotationProof,
+      uploadedAt: e.quotationProofUploadedAt || null,
     });
   } catch (err) {
     return next(err);
